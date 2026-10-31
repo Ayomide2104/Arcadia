@@ -19,19 +19,41 @@ const games = [
   ['efootball','eFootball',['sports','football'],'#5fb4f0'],['free-fire','Free Fire',['battle-royale','shooter'],'#f2994a'],
   ['call-of-duty-mobile','Call of Duty: Mobile',['fps','tactical-shooter'],'#d5a66b'],['asphalt-legends-unite','Asphalt Legends Unite',['racing','arcade'],'#ef6a6a']
 ].map(([slug,name,genres,accent]) => ({ slug,name,genres,accent,platforms:[],description:`Find players and conversations for ${name}.`,aliases:[],active:true }));
+const GENRE_LABELS = {
+  sports: 'Sports', fps: 'FPS', rpg: 'RPG', 'battle-royale': 'Battle Royale', racing: 'Racing',
+  strategy: 'Strategy', fighting: 'Fighting', simulation: 'Simulation', adventure: 'Adventure', party: 'Party Games'
+};
+const GENRE_ACCENTS = {
+  sports: '#53dcaa', fps: '#ff8193', rpg: '#8ca7f2', 'battle-royale': '#e8ad6a', racing: '#65d6c1',
+  strategy: '#e37b73', fighting: '#f17f80', simulation: '#79c76a', adventure: '#e09a78', party: '#e989a6'
+};
+const FLAIRS = ['Discussion', 'Clip', 'Question', 'Guide'];
+
+// One community per game, and one per genre. Founders can still create their own.
+const gameCommunities = games.map(({ slug, name, genres, accent }) => ({
+  slug: slug === 'gta-v' ? 'gta' : slug, name, game: slug, games: [slug], genres,
+  description: `The official ${name} community on Arcadia: tips, clips and squads.`, accent, official: true
+}));
+const genreCommunities = Object.entries(GENRE_LABELS).map(([id, label]) => ({
+  slug: `genre-${id}`, name: `${label} Lounge`, game: null, games: [], genres: [id],
+  description: `Everything ${label.toLowerCase()}: recommendations, squads and hot takes.`, accent: GENRE_ACCENTS[id]
+}));
 const communities = [
-  { slug:'fc-mobile',name:'FC Mobile',game:'fc-mobile',description:'Build your squad, trade tips, and talk football.',accent:'#53dcaa' },
-  { slug:'call-of-duty',name:'Call of Duty',game:'call-of-duty',description:'Find a team and share the clutch moments.',accent:'#d5a66b' },
-  { slug:'gta',name:'GTA',game:'gta-v',description:'Hang out, plan a heist, or just roam the city.',accent:'#e09a78' },
-  { slug:'minecraft',name:'Minecraft',game:'minecraft',description:'Share builds, worlds, and survival stories.',accent:'#79c76a' },
-  { slug:'general-gaming',name:'General Gaming',game:null,description:'A lobby for everything you play.',accent:'#68d6bd' }
-].map((community) => ({ ...community, rules: ['Keep it friendly.','No spam or harassment.'], visibility:'public',active:true }));
+  ...gameCommunities,
+  ...genreCommunities,
+  { slug:'arcadia',name:'Arcadia',game:null,games:[],genres:[],description:'The official home of Arcadia: news, feedback, new features and a warm welcome.',accent:'#8b7df6', official: true },
+  { slug:'general-gaming',name:'General Gaming',game:null,games:[],genres:[],description:'A lobby for everything you play.',accent:'#68d6bd' }
+].map((community) => ({ ...community, rules: ['Keep it friendly.','No spam or harassment.','Stay on topic.'], flairs: FLAIRS, visibility:'public',active:true }));
 
 async function seed() {
   try {
     await connectDatabase();
     for (const game of games) await Game.updateOne({ slug: game.slug }, { $set: game, $setOnInsert: { popularity: 0 } }, { upsert:true });
-    for (const community of communities) await Community.updateOne({ slug: community.slug }, { $setOnInsert: { ...community, memberCount:0 } }, { upsert:true });
+    for (const community of communities) {
+      const { games: focus, genres, flairs, official, ...rest } = community;
+      // Focus and flairs are refreshed on every run; owner, rules and counts are left alone.
+      await Community.updateOne({ slug: community.slug }, { $set: { games: focus, genres, flairs, official: Boolean(official) }, $setOnInsert: { ...rest, memberCount:0 } }, { upsert:true });
+    }
     console.info(`Catalog upserted: ${games.length} games, ${communities.length} communities.`);
   } finally { await mongoose.disconnect(); }
 }

@@ -1,9 +1,7 @@
-/* Arcadia full-page onboarding: interests -> games -> profile.
+/* Arcadia full-page onboarding: interests -> games -> communities -> profile.
    Uses the same API calls as before (PATCH /auth/profile) and the
    database-driven catalogue (GET /games). No profile photo here:
    photos belong in Edit profile. */
-
-import { setAvatar, isPhotoAvatar, prepareAvatarFile, prepareBannerFile, applyBanner } from './avatar.js';
 
 const GAME_IMG = (slug) => `/assets/arcadia/games/${slug}.jpg`;
 
@@ -20,7 +18,7 @@ const GENRES = [
   { id: 'party', label: 'Casual & party', blurb: 'Easy games to play with friends, any time.', games: ['among-us', 'roblox', 'minecraft'] },
 ];
 
-const STEPS = ['Interests', 'Games', 'Profile'];
+const STEPS = ['Interests', 'Games', 'Communities', 'Profile'];
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -59,6 +57,7 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
       displayName: user.displayName || '',
       bio: user.bio || '',
       catalogue: null,
+      joined: new Set(),
       busy: false,
     };
 
@@ -238,86 +237,79 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
       });
     }
 
-    /* ---------- Step 3: player card (photo, banner, name, bio) ---------- */
-    function renderProfile() {
+    /* ---------- Step 3: communities ---------- */
+    const initialsOf = (name) => String(name).split(/\s+/).map((word) => word[0]).slice(0, 2).join('').toUpperCase();
+
+    function communityCard(community) {
+      const card = el('article', 'ob-comm');
+      card.style.setProperty('--ob-tint', community.accent || '#68d6bd');
+      const icon = el('span', 'ob-comm__icon');
+      const focus = (community.games && community.games[0]) || community.game;
+      if (focus) {
+        const image = cover(focus, 'ob-comm__img');
+        image.addEventListener('error', () => { image.remove(); icon.textContent = initialsOf(community.name); });
+        icon.append(image);
+      } else icon.textContent = initialsOf(community.name);
+
+      const text = el('div', 'ob-comm__text');
+      const heading = el('h3', '', community.name);
+      if (community.official) heading.append(el('span', 'ob-official', 'Official'));
+      text.append(heading, el('p', 'ob-comm__meta', `${community.memberCount || 0} ${community.memberCount === 1 ? 'member' : 'members'}`));
+      const why = [...(community.match?.games || []).map((slug) => slug.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ')), ...(community.match?.genres || []).map((id) => GENRES.find((g) => g.id === id)?.label).filter(Boolean)];
+      if (why.length) text.append(el('p', 'ob-comm__why', `Because you picked ${why.slice(0, 2).join(' & ')}`));
+      else if (community.description) text.append(el('p', 'ob-comm__why', community.description));
+
+      const button = el('button', 'ob-btn ob-comm__join');
+      button.type = 'button';
+      const paint = () => {
+        const on = state.joined.has(community.slug);
+        button.textContent = on ? 'Joined' : 'Join';
+        button.classList.toggle('is-joined', on);
+        button.setAttribute('aria-pressed', String(on));
+        button.setAttribute('aria-label', `${on ? 'Leave' : 'Join'} ${community.name}`);
+      };
+      paint();
+      button.addEventListener('click', async () => {
+        const on = state.joined.has(community.slug);
+        button.disabled = true;
+        try {
+          await api(`/communities/${community.slug}/join`, { method: on ? 'DELETE' : 'POST' });
+          if (on) state.joined.delete(community.slug); else state.joined.add(community.slug);
+          footerNote('');
+          paint();
+          renderFooter();
+        } catch (error) {
+          footerNote(error.message || 'Could not update that community.');
+        } finally { button.disabled = false; }
+      });
+      card.append(icon, text, button);
+      return card;
+    }
+
+    function renderCommunities() {
       main.replaceChildren();
-      main.append(
-        el('h1', '', 'Your player card'),
-        el('p', 'ob-sub', 'Add a photo and a banner so friends recognise you. Both are optional and you can change them any time in Edit profile.')
-      );
-
-      const card = el('div', 'ob-card');
-      const coverNode = el('div', 'ob-card__cover');
-      coverNode.setAttribute('aria-hidden', 'true');
-      const row = el('div', 'ob-card__row');
-      const avatarNode = el('div', 'ob-card__avatar');
-      avatarNode.setAttribute('aria-hidden', 'true');
-      const id = el('div', 'ob-card__id');
-      const nameNode = el('div', 'ob-card__name');
-      id.append(nameNode, el('div', 'ob-card__handle', `@${getUser().username}`));
-      row.append(avatarNode, id);
-
-      const actions = el('div', 'ob-card__actions');
-      const photoButton = el('button', 'ob-pill');
-      photoButton.type = 'button';
-      const bannerButton = el('button', 'ob-pill');
-      bannerButton.type = 'button';
-      const photoFile = el('input');
-      photoFile.type = 'file';
-      photoFile.accept = 'image/jpeg,image/png,image/webp,image/gif';
-      photoFile.hidden = true;
-      const bannerFile = el('input');
-      bannerFile.type = 'file';
-      bannerFile.accept = 'image/jpeg,image/png,image/webp,image/gif';
-      bannerFile.hidden = true;
-      actions.append(photoButton, bannerButton, photoFile, bannerFile);
-      const status = el('p', 'ob-card__status');
-      status.setAttribute('role', 'status');
-      card.append(coverNode, row, actions, status);
-
-      function say(text, isError = false) {
-        status.textContent = text;
-        status.classList.toggle('is-error', isError);
-      }
-
-      function paint() {
-        const current = getUser();
-        const display = state.displayName.trim() || current.displayName || current.username;
-        nameNode.textContent = display;
-        setAvatar(avatarNode, current.avatar || 'gradient-violet', display[0].toUpperCase());
-        applyBanner(coverNode, current, '/assets/arcadia/covers/cover-nebula.svg');
-        photoButton.textContent = isPhotoAvatar(current.avatar) ? 'Change photo' : 'Add photo';
-        bannerButton.textContent = isPhotoAvatar(current.banner) ? 'Change banner' : 'Add banner';
-      }
-
-      async function upload(file, prepare, endpoint, key, label) {
-        if (!file) return;
-        if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
-          say('Choose a JPEG, PNG, WebP or GIF image.', true);
+      main.append(el('h1', '', 'Find your people'), el('p', 'ob-sub', 'Join communities for the games and genres you picked. Say hello, find a squad, and leave any time.'));
+      const list = el('div', 'ob-comms');
+      list.append(el('p', 'ob-empty', 'Finding communities…'));
+      main.append(list);
+      api('/communities/suggested').then((data) => {
+        list.replaceChildren();
+        const items = data.items || [];
+        if (!items.length) {
+          list.append(el('p', 'ob-empty', 'There are no communities to suggest yet. You can create your own from the Communities page.'));
           return;
         }
-        photoButton.disabled = bannerButton.disabled = true;
-        say('Uploading…');
-        try {
-          const prepared = await prepare(file);
-          const form = new FormData();
-          form.append('photo', prepared);
-          const result = await api(endpoint, { method: 'POST', body: form });
-          setUser({ ...getUser(), [key]: result.user[key] });
-          paint();
-          say(`${label} added.`);
-        } catch (error) {
-          say(error.message || 'Could not upload that image.', true);
-        } finally {
-          photoButton.disabled = bannerButton.disabled = false;
-        }
-      }
+        if (data.fallback) main.insertBefore(el('p', 'ob-note-line', 'We could not match your picks yet, so here are some popular communities.'), list);
+        for (const community of items) list.append(communityCard(community));
+      }).catch((error) => {
+        list.replaceChildren(el('p', 'ob-empty', error.message || 'Could not load communities. You can skip this step.'));
+      });
+    }
 
-      photoButton.addEventListener('click', () => photoFile.click());
-      bannerButton.addEventListener('click', () => bannerFile.click());
-      photoFile.addEventListener('change', () => { const file = photoFile.files?.[0]; photoFile.value = ''; upload(file, prepareAvatarFile, '/auth/avatar', 'avatar', 'Photo'); });
-      bannerFile.addEventListener('change', () => { const file = bannerFile.files?.[0]; bannerFile.value = ''; upload(file, prepareBannerFile, '/auth/banner', 'banner', 'Banner'); });
-
+    /* ---------- Step 4: profile ---------- */
+    function renderProfile() {
+      main.replaceChildren();
+      main.append(el('h1', '', 'Your player card'), el('p', 'ob-sub', 'Tell people who you are. You can add a profile photo any time from Edit profile.'));
       const form = el('div', 'ob-form');
       const nameLabel = el('label', '', 'Display name');
       nameLabel.htmlFor = 'ob-name';
@@ -327,7 +319,7 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
       name.autocomplete = 'nickname';
       name.placeholder = 'What should people call you?';
       name.value = state.displayName;
-      name.addEventListener('input', () => { state.displayName = name.value; paint(); });
+      name.addEventListener('input', () => { state.displayName = name.value; });
       const bioLabel = el('label', '', 'Short bio (optional)');
       bioLabel.htmlFor = 'ob-bio';
       const bio = el('textarea');
@@ -338,9 +330,7 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
       bio.value = state.bio;
       bio.addEventListener('input', () => { state.bio = bio.value; });
       form.append(nameLabel, name, bioLabel, bio);
-
-      main.append(card, form);
-      paint();
+      main.append(form);
     }
 
     /* ---------- Footer / navigation ---------- */
@@ -357,14 +347,14 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
         back.addEventListener('click', () => go(state.step - 1));
         left.append(back);
       }
-      const count = state.step === 1 ? state.genres.length : state.step === 2 ? state.games.length : 0;
-      if (state.step < 3) left.append(el('span', 'ob-count', count ? `${count} selected` : 'Nothing selected yet'));
+      const count = state.step === 1 ? state.genres.length : state.step === 2 ? state.games.length : state.step === 3 ? state.joined.size : 0;
+      if (state.step < 4) left.append(el('span', 'ob-count', state.step === 3 ? (count ? `${count} joined` : 'Nothing joined yet') : (count ? `${count} selected` : 'Nothing selected yet')));
 
       const right = el('div', 'ob-footer__right');
-      const skip = el('button', 'ob-btn ob-btn--ghost', state.step === 3 ? 'Skip' : 'Skip for now');
+      const skip = el('button', 'ob-btn ob-btn--ghost', state.step === 4 ? 'Skip' : 'Skip for now');
       skip.type = 'button';
-      skip.addEventListener('click', () => (state.step === 3 ? finish(true) : go(state.step + 1)));
-      const next = el('button', 'ob-btn ob-btn--primary', state.step === 3 ? 'Finish' : 'Continue');
+      skip.addEventListener('click', () => (state.step === 4 ? finish(true) : go(state.step + 1)));
+      const next = el('button', 'ob-btn ob-btn--primary', state.step === 4 ? 'Finish' : 'Continue');
       next.type = 'button';
       next.disabled = state.busy || (state.step < 3 && count === 0);
       next.addEventListener('click', () => advance());
@@ -378,6 +368,7 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
       renderProgress();
       if (step === 1) renderInterests();
       else if (step === 2) renderGames();
+      else if (step === 3) renderCommunities();
       else renderProfile();
       renderFooter();
       page.scrollTo({ top: 0 });
@@ -402,6 +393,7 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
     async function advance() {
       if (state.step === 1) { if (await save({ genres: state.genres })) go(2); }
       else if (state.step === 2) { if (await save({ favoriteGames: state.games })) go(3); }
+      else if (state.step === 3) go(4);
       else finish(false);
     }
 

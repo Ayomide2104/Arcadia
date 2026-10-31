@@ -72,6 +72,8 @@ app.use(async (req, res, next) => {
   const scheme = req.secure ? 'https' : 'http';
   const sameOrigin = isDeployed && !process.env.CLIENT_URL && origin === `${scheme}://${req.get('host')}`;
   if (!allowedOrigins.includes(origin) && !sameOrigin) return res.status(403).json({ success: false, error: 'Request origin is not allowed.' });
+  // The admin area has its own sign-in cookie and its own CSRF token.
+  if (req.path.startsWith('/api/admin/')) return next();
   if (!req.cookies?.mk_session) return next();
   try {
     const tokenHash = crypto.createHash('sha256').update(req.cookies.mk_session).digest('hex');
@@ -88,6 +90,12 @@ app.use((req, res, next) => {
   if (!isDeployed) console.info(`${req.method} ${req.path}`);
   next();
 });
+// The admin pages are never indexed or cached.
+app.use('/admin', (req, res, next) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/posts', require('./routes/postRoutes'));
@@ -97,6 +105,7 @@ app.use('/api/friends', require('./routes/friendRequestRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/presence', require('./routes/presenceRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
 // Keep API misses on the JSON 404 path before static files are considered.
 app.use('/api', notFound);
 if (isDeployed) {

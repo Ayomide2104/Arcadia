@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const { getFriendIds } = require('./friends');
+const { recordActivity } = require('./activity');
 
 /*
  * Online presence, kept in memory (Arcadia runs as one server).
@@ -14,6 +15,11 @@ const connections = new Map(); // userId -> Set of socket ids
 const usernames = new Map(); // userId -> username
 const announced = new Set(); // userIds friends currently see as online
 const offlineTimers = new Map(); // userId -> timeout
+
+/** How many different people are connected right now (for admin analytics). */
+function onlineCount() {
+  return connections.size;
+}
 
 function isOnline(userId) {
   return connections.has(String(userId));
@@ -40,6 +46,7 @@ async function announce(io, userId, online, lastActiveAt = null) {
 async function connected(io, socket) {
   const userId = socket.data.user.id;
   usernames.set(userId, socket.data.user.username);
+  recordActivity(userId);
 
   clearTimeout(offlineTimers.get(userId));
   offlineTimers.delete(userId);
@@ -104,4 +111,4 @@ async function refreshVisibility(io, userId) {
   }
 }
 
-module.exports = { connected, disconnected, refreshVisibility, isOnline, GRACE_MS };
+module.exports = { connected, disconnected, refreshVisibility, isOnline, onlineCount, GRACE_MS };

@@ -1,0 +1,30 @@
+/* The Games and Communities pages live in js/games.js and js/communities.js. */
+const gamesPage = createGames({
+  api,
+  getUser: () => currentUser,
+  toast,
+  openAuth,
+  gameInfo: getArcadiaGame,
+  gameTheme: arcGameTheme,
+  gameFont: getArcadiaGameFont,
+  detailPage: arcDetailPage,
+  navigate: (view) => selectView(view),
+  openCommunity: (slug) => communitiesPage.open(slug),
+  createCommunity: (prefill) => communitiesPage.openCreate(prefill),
+  findCommunities: (slug) => communitiesPage.openExplore({ game: slug })
+});
+
+const communitiesPage = createCommunities({
+  api,
+  getUser: () => currentUser,
+  toast,
+  openAuth,
+  gameInfo: getArcadiaGame,
+  navigate: (view) => selectView(view),
+  openGame: (slug) => gamesPage.openGame(slug)
+});
+
+function loadGames() { void gamesPage.show(); }
+function loadCommunities() { void communitiesPage.show(); }
+function openCommunity(slug) { communitiesPage.open(slug); }
+

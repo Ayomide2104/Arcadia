@@ -1,0 +1,80 @@
+function arcDetailPage({
+  title,
+  kicker = '',
+  description = '',
+  facts = [],
+  banner = '',
+  poster = '',
+  accent = '',
+  heroColor = '',
+  titleFont = '',
+  backLabel = 'Back',
+  actions = [],
+  extra = null,
+  onBack
+}) {
+  const page = uiEl('article', 'gd');
+  if (accent) page.style.setProperty('--gd-accent', accent);
+  if (heroColor) page.style.setProperty('--gd-hero', heroColor);
+  if (titleFont) page.style.setProperty('--gd-title-font', titleFont);
+
+  const back = uiEl('button', 'gd-back');
+  back.type = 'button';
+  back.append(uiEl('span', '', '‹'), uiEl('span', '', backLabel));
+  back.addEventListener('click', () => { if (typeof onBack === 'function') onBack(); });
+
+  const card = uiEl('div', 'gd-card');
+
+  const hero = uiEl('div', 'gd-hero');
+  hero.setAttribute('aria-hidden', 'true');
+  const showPoster = () => {
+    if (!poster || hero.querySelector('.gd-poster')) return;
+    const img = uiEl('img', 'gd-poster');
+    img.src = poster;
+    img.alt = '';
+    hero.append(img);
+  };
+  if (banner) {
+    const probe = new Image();
+    probe.onload = () => { hero.style.backgroundImage = `url("${banner}")`; };
+    probe.onerror = showPoster;
+    probe.src = banner;
+  } else {
+    showPoster();
+  }
+
+  const body = uiEl('div', 'gd-body');
+  body.append(uiEl('h1', 'gd-title', title));
+  if (kicker) body.append(uiEl('p', 'gd-kicker', kicker));
+  if (description) body.append(uiEl('p', 'gd-desc', description));
+
+  // Optional buttons (for example "Add to my games") sit under the write-up.
+  if (actions.length) {
+    const row = uiEl('div', 'gd-actions');
+    row.append(...actions);
+    body.append(row);
+  }
+
+  const shownFacts = facts.filter(([, value]) => value);
+  if (shownFacts.length) {
+    const list = uiEl('dl', 'gd-facts');
+    for (const [label, value] of shownFacts) {
+      const item = uiEl('div', 'gd-fact');
+      item.append(uiEl('dt', '', label), uiEl('dd', '', value));
+      list.append(item);
+    }
+    body.append(list);
+  }
+
+  // Optional extra section (for example the communities for a game).
+  if (extra) {
+    const wrap = uiEl('div', 'gd-extra');
+    wrap.append(extra);
+    body.append(wrap);
+  }
+
+  card.append(hero, body);
+  page.append(back, card);
+  return page;
+}
+
