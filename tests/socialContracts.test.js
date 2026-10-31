@@ -20,7 +20,7 @@ test('public profile serializer omits credentials, settings, and private fields'
     _id: 'user-id', username: 'player', displayName: 'Player', createdAt,
     passwordHash: 'must-not-leak', email: 'private@example.invalid', settings: { secret: true }, sessionData: 'private'
   });
-  assert.deepEqual(serialized, { id: 'user-id', username: 'player', displayName: 'Player', bio: '', avatar: null, genres: [], favoriteGames: [], createdAt, onboardingComplete: false });
+  assert.deepEqual(serialized, { id: 'user-id', username: 'player', displayName: 'Player', bio: '', avatar: null, banner: null, genres: [], favoriteGames: [], createdAt, onboardingComplete: false });
   assert.doesNotMatch(JSON.stringify(serialized), /passwordHash|email|settings|sessionData|must-not-leak/);
 });
 

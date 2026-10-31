@@ -229,52 +229,78 @@ router.get('/', optionalAuth, async (req, res, next) => {
       typeof paginationCursor?.t === 'number' ? paginationCursor.t : Date.now()
     );
 
-    const candidates = await Post.find(query)
-      .sort({ _id: -1 })
-      .limit(200)
-      .populate('author', 'username displayName avatar')
-      .lean();
-
-    const gameSlugs = [
-      ...new Set(
-        candidates.flatMap((post) =>
-          post.destinations
-            .filter((destination) => destination.type === 'game')
-            .map((destination) => destination.target)
-        )
-      ),
-    ];
-
-    const games = await Game.find({
-      slug: { $in: gameSlugs },
-    })
-      .select('slug genres')
-      .lean();
-
-    const genreMap = new Map(
-      games.map((game) => [game.slug, game.genres || []])
-    );
-
+    const candidateBatchSize = 200;
+    let candidateAfter = null;
+    const genreMap = new Map();
     const friendSet = new Set(friendIds.map(String));
-    let seenSet = new Set();
-
-    if (req.user && candidates.length) {
-      const seenRows = await SeenPost.find({
-        user: req.user._id,
-        post: { $in: candidates.map((post) => post._id) },
-        seenAt: { $lt: seenBefore },
-      })
-        .select('post')
-        .lean();
-
-      seenSet = new Set(seenRows.map((row) => String(row.post)));
-    }
-
-    // Use the first request's time for every page, so ranks cannot drift between pages.
+    const seenSet = new Set();
+    const ranked = [];
     const now = seenBefore.getTime();
 
-    const ranked = candidates
-      .map((post) => {
+    // Scan newest-to-oldest in bounded batches. Ranking is still performed
+    // across every candidate that could outrank the current page, rather than
+    // imposing a permanent 200-post ceiling on the feed.
+    while (true) {
+      const batchQuery = candidateAfter
+        ? {
+            $and: [
+              query,
+              {
+                $or: [
+                  { createdAt: { $lt: candidateAfter.createdAt } },
+                  {
+                    createdAt: candidateAfter.createdAt,
+                    _id: { $lt: candidateAfter._id },
+                  },
+                ],
+              },
+            ],
+          }
+        : query;
+
+      const batch = await Post.find(batchQuery)
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(candidateBatchSize)
+        .populate('author', 'username displayName avatar')
+        .lean();
+
+      if (!batch.length) break;
+
+      candidateAfter = batch[batch.length - 1];
+
+      const gameSlugs = [
+        ...new Set(
+          batch.flatMap((post) =>
+            post.destinations
+              .filter((destination) => destination.type === 'game')
+              .map((destination) => destination.target)
+          )
+        ),
+      ];
+
+      if (gameSlugs.length) {
+        const games = await Game.find({ slug: { $in: gameSlugs } })
+          .select('slug genres')
+          .lean();
+
+        for (const game of games) {
+          genreMap.set(game.slug, game.genres || []);
+        }
+      }
+
+      if (req.user) {
+        const seenRows = await SeenPost.find({
+          user: req.user._id,
+          post: { $in: batch.map((post) => post._id) },
+          seenAt: { $lt: seenBefore },
+        })
+          .select('post')
+          .lean();
+
+        for (const row of seenRows) seenSet.add(String(row.post));
+      }
+
+      const rankedBatch = batch.map((post) => {
         const hours = Math.max(
           0,
           (now - new Date(post.createdAt).getTime()) / 3600000
@@ -289,21 +315,13 @@ router.get('/', optionalAuth, async (req, res, next) => {
         );
 
         const genreMatch = (req.user?.genres || []).some((genre) =>
-          gameTargets.some((slug) =>
-            genreMap.get(slug)?.includes(genre)
-          )
+          gameTargets.some((slug) => genreMap.get(slug)?.includes(genre))
         );
 
         const recency = 4 * Math.exp(-hours / 72);
-
-        // Friends' posts get a boost; posts already seen sink (but stay available).
         const friendBoost = friendSet.has(String(post.author?._id)) ? 1.5 : 0;
         const seenPenalty = seenSet.has(String(post._id)) ? 6 : 0;
-
-        const interests =
-          (gameMatch ? 3 : 0) +
-          (genreMatch ? 1.5 : 0);
-
+        const interests = (gameMatch ? 3 : 0) + (genreMatch ? 1.5 : 0);
         const engagement = Math.min(
           1,
           Math.log1p(
@@ -317,12 +335,40 @@ router.get('/', optionalAuth, async (req, res, next) => {
           ...post,
           _rank: recency + interests + engagement + friendBoost - seenPenalty,
         };
-      })
-      .sort(
+      });
+
+      ranked.push(...rankedBatch);
+      ranked.sort(
         (a, b) =>
           b._rank - a._rank ||
           String(b._id).localeCompare(String(a._id))
       );
+
+      if (batch.length < candidateBatchSize) break;
+
+      // The maximum possible score for any unscanned post is its maximum
+      // recency score plus the capped interest, engagement, and friend boosts:
+      // 4 + 3 + 1.5 + 1 + 1.5 = 11. We can stop only when even that upper
+      // bound is strictly below the last item needed for this page. A strict
+      // comparison preserves deterministic tie-breaking.
+      const afterCursor = req.query.cursor
+        ? ranked.filter(
+            (post) =>
+              post._rank < paginationCursor.score ||
+              (post._rank === paginationCursor.score &&
+                String(post._id).localeCompare(paginationCursor.id) < 0)
+          )
+        : ranked;
+
+      if (afterCursor.length > limit) {
+        const pageBoundary = afterCursor[limit - 1];
+        const oldestCandidateTime = new Date(candidateAfter.createdAt).getTime();
+        const oldestHours = Math.max(0, (now - oldestCandidateTime) / 3600000);
+        const unseenUpperBound = 4 * Math.exp(-oldestHours / 72) + 7;
+
+        if (unseenUpperBound < pageBoundary._rank) break;
+      }
+    }
 
     let after = ranked;
 
@@ -330,10 +376,8 @@ router.get('/', optionalAuth, async (req, res, next) => {
       after = ranked.filter(
         (post) =>
           post._rank < paginationCursor.score ||
-          (
-            post._rank === paginationCursor.score &&
-            String(post._id).localeCompare(paginationCursor.id) < 0
-          )
+          (post._rank === paginationCursor.score &&
+            String(post._id).localeCompare(paginationCursor.id) < 0)
       );
     }
 

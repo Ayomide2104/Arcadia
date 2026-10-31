@@ -102,6 +102,36 @@ test('isolated Mongo social flows enforce authentication, idempotency, visibilit
       assert.equal((await request(`/api/posts/${privatePost._id}`,{auth})).response.status,200);
     });
 
+    await t.test('general feed pagination can reach posts beyond the first 200 candidates', async () => {
+      const auth = await register(`feedpage_${randomUUID().replaceAll('-', '').slice(0, 16)}`);
+      const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
+      const baseTime = Date.now();
+      const records = Array.from({ length: 215 }, (_, index) => ({
+        author: auth.user.id,
+        body: `Pagination regression ${suffix} ${index}`,
+        destinations: [{ type: 'general' }],
+        createdAt: new Date(baseTime - (214 - index) * 60_000),
+        updatedAt: new Date(baseTime - (214 - index) * 60_000),
+      }));
+      const created = await Post.insertMany(records);
+      const expectedIds = new Set(created.map((post) => String(post._id)));
+      const foundIds = new Set();
+      let cursor = null;
+      let pages = 0;
+
+      do {
+        const path = `/api/posts?limit=30${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+        const page = await request(path);
+        assert.equal(page.response.status, 200, JSON.stringify(page.json));
+        for (const post of page.json.data.items) foundIds.add(String(post._id));
+        cursor = page.json.data.nextCursor;
+        pages += 1;
+        assert.ok(pages <= 20, 'pagination should terminate instead of looping indefinitely');
+      } while (cursor);
+
+      assert.ok([...expectedIds].every((id) => foundIds.has(id)), 'all 215 inserted posts should be reachable');
+    });
+
     await t.test('public profile serializer is allow-listed and password change revokes other sessions', async () => {
       const username = `settings_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
       const first = await register(username);
