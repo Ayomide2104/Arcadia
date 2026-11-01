@@ -93,7 +93,7 @@ router.get('/', discoveryLimit, async (req, res, next) => {
 router.get('/mine', requireAuth, async (req, res, next) => {
   try {
     const memberships = await Membership.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(50).populate({ path: 'community', select: '-ownerUser' }).lean();
-    res.json({ success: true, data: { items: memberships.filter((entry) => entry.community).map((entry) => ({ ...entry.community, role: entry.role })) } });
+    res.json({ success: true, data: { items: memberships.filter((entry) => entry.community && entry.community.active !== false).map((entry) => ({ ...entry.community, role: entry.role })) } });
   } catch (error) { next(error); }
 });
 
@@ -249,6 +249,8 @@ router.delete('/:slug/join', requireAuth, async (req, res, next) => {
     if (membership) {
       const removed = await Membership.deleteOne({ _id: membership._id });
       if (removed.deletedCount) await Community.updateOne({ _id: community._id, memberCount: { $gt: 0 } }, { $inc: { memberCount: -1 } });
+      // Stop live chat updates for a community the player just left.
+      try { req.app.get('io')?.in(`user:${req.user._id}`).socketsLeave(`community:${community._id}`); } catch { /* not connected */ }
     }
     res.json({ success: true, data: { joined: false, memberCount: await Membership.countDocuments({ community: community._id }) } });
   } catch (error) { next(error); }
@@ -448,9 +450,12 @@ router.delete('/:slug/posts/:postId', requireAuth, async (req, res, next) => {
     const community = await Community.findOne({ slug: req.params.slug, active: true }).select('_id').lean();
     if (!community) return res.status(404).json({ success: false, error: 'Community not found.' });
     const membership = await Membership.findOne({ community: community._id, user: req.user._id }).select('role').lean();
-    if (!membership || !['owner', 'moderator'].includes(membership.role)) return res.status(403).json({ success: false, error: 'Only community moderators can remove posts.' });
-    const post = await Post.findOne({ _id: req.params.postId, removedAt: null, destinations: { $elemMatch: { type: 'community', target: req.params.slug } } }).select('destinations').lean();
+    const post = await Post.findOne({ _id: req.params.postId, removedAt: null, destinations: { $elemMatch: { type: 'community', target: req.params.slug } } }).select('destinations author').lean();
     if (!post) return res.status(404).json({ success: false, error: 'Community post not found.' });
+    // Moderators can remove any post; authors can remove their own.
+    const isAuthor = String(post.author) === String(req.user._id);
+    const isStaff = Boolean(membership && ['owner', 'moderator'].includes(membership.role));
+    if (!isAuthor && !isStaff) return res.status(403).json({ success: false, error: 'Only community moderators can remove posts.' });
     const otherDestinations = post.destinations.filter((destination) => destination.type !== 'community' || destination.target !== req.params.slug);
     if (otherDestinations.length) await Post.updateOne({ _id: post._id, removedAt: null }, { $pull: { destinations: { type: 'community', target: req.params.slug } } });
     else await Post.updateOne({ _id: post._id, removedAt: null }, { $set: { removedAt: new Date(), removedBy: req.user._id } });

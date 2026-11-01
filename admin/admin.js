@@ -1,6 +1,8 @@
 /* Arcadia Admin: separate control room (users, content, analytics, system).
    Plain JavaScript. Everything shown is built with DOM APIs (no innerHTML). */
 
+import { pageCommunities } from './communities.js';
+
 const app = document.querySelector('#app');
 let csrf = null;
 let pollTimer = null;
@@ -180,6 +182,7 @@ const PAGES = [
   ['overview', 'Overview', '📊'],
   ['users', 'Users', '👥'],
   ['content', 'Content', '📝'],
+  ['communities', 'Communities', '🏛️'],
   ['system', 'System', '🛠️'],
 ];
 
@@ -192,7 +195,8 @@ function renderShell(page) {
     ...nav,
     h('div', { class: 'side__foot' }, h('button', { class: 'nav', onClick: async () => { try { await api('/logout', { method: 'POST' }); } catch { /* already signed out */ } csrf = null; renderLogin(); } }, h('span', { 'aria-hidden': 'true' }, '🚪'), 'Sign out')));
   app.replaceChildren(h('div', { class: 'shell' }, side, main));
-  ({ overview: pageOverview, users: pageUsers, content: pageContent, system: pageSystem })[page](main);
+  ({ overview: pageOverview, users: pageUsers, content: pageContent, system: pageSystem,
+    communities: (target) => pageCommunities(target, { h, api, guard, modal, toast, number, dateText, renderLogin }) })[page](main);
 }
 
 async function guard(promise, container) {

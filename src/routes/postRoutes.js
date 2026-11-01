@@ -711,6 +711,17 @@ router.post(
         media,
       });
 
+      const communitySlugs = normalized
+        .filter((destination) => destination.type === 'community')
+        .map((destination) => destination.target);
+
+      if (communitySlugs.length) {
+        await Community.updateMany(
+          { slug: { $in: communitySlugs } },
+          { $inc: { postCount: 1 } }
+        );
+      }
+
       await post.populate('author', 'username displayName avatar');
 
       return res.status(201).json({

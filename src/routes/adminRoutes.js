@@ -147,6 +147,8 @@ router.get('/online', (req, res) => {
 
 /* ------------------------------ users ------------------------------ */
 
+router.use('/communities', require('./adminCommunityRoutes'));
+
 router.get('/users', async (req, res, next) => {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 40) : '';

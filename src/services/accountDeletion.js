@@ -11,6 +11,9 @@ const Friendship = require('../models/Friendship');
 const FriendRequest = require('../models/FriendRequest');
 const Notification = require('../models/Notification');
 const SeenPost = require('../models/SeenPost');
+const Vote = require('../models/Vote');
+const CommunityMessage = require('../models/CommunityMessage');
+const CommunityChannel = require('../models/CommunityChannel');
 const DailyActive = require('../models/DailyActive');
 const cloudinary = require('../config/cloudinary');
 const { removeOwnedImage } = require('./media');
@@ -59,8 +62,8 @@ async function removePosts(postIds) {
   const summary = { posts: 0, comments: 0, reactions: 0, reposts: 0, images: 0 };
   if (!postIds.length) return summary;
 
-  const direct = await Post.find({ _id: { $in: postIds } }).select('_id author type repostOf media').lean();
-  const copies = await Post.find({ repostOf: { $in: postIds }, _id: { $nin: postIds } }).select('_id author type repostOf media').lean();
+  const direct = await Post.find({ _id: { $in: postIds } }).select('_id author type repostOf media destinations').lean();
+  const copies = await Post.find({ repostOf: { $in: postIds }, _id: { $nin: postIds } }).select('_id author type repostOf media destinations').lean();
   const all = [...direct, ...copies];
   const ids = all.map((post) => post._id);
   if (!ids.length) return summary;
@@ -71,6 +74,20 @@ async function removePosts(postIds) {
   const repostBack = all.filter((post) => post.type === 'repost' && post.repostOf && !removing.has(String(post.repostOf)));
   await adjust(Post, 'repostCount', countsByKey(repostBack.map((post) => post.repostOf)));
   for (const post of repostBack) await Repost.deleteMany({ user: post.author, post: post.repostOf });
+
+  // Keep each community's post counter honest.
+  const perCommunity = new Map();
+  for (const post of all) {
+    for (const destination of post.destinations || []) {
+      if (destination.type === 'community' && destination.target) perCommunity.set(destination.target, (perCommunity.get(destination.target) || 0) + 1);
+    }
+  }
+  if (perCommunity.size) {
+    await Community.bulkWrite([...perCommunity.entries()].map(([slug, n]) => ({
+      updateOne: { filter: { slug }, update: [{ $set: { postCount: { $max: [0, { $subtract: [{ $ifNull: ['$postCount', 0] }, n] }] } } }] }
+    })), { ordered: false });
+  }
+  await Vote.deleteMany({ post: { $in: ids } });
 
   summary.comments = (await Comment.deleteMany({ post: { $in: ids } })).deletedCount || 0;
   summary.reactions = (await Reaction.deleteMany({ post: { $in: ids } })).deletedCount || 0;
@@ -132,6 +149,20 @@ async function deleteUserAndData(userId, { io = null } = {}) {
   const reposts = await Repost.find({ user: userId }).select('post').lean();
   await adjust(Post, 'repostCount', countsByKey(reposts.map((r) => r.post)));
   await Repost.deleteMany({ user: userId });
+
+  // 3b. Their community votes on other people's posts: undo the score.
+  const votes = await Vote.find({ user: userId }).select('post value').lean();
+  if (votes.length) {
+    await Post.bulkWrite(votes.map((vote) => ({ updateOne: { filter: { _id: vote.post }, update: { $inc: { score: -vote.value } } } })), { ordered: false });
+  }
+  summary.votesGiven = (await Vote.deleteMany({ user: userId })).deletedCount || 0;
+
+  // 3c. Their community chat: messages, squad spots and reactions.
+  summary.chatMessages = (await CommunityMessage.deleteMany({ author: userId })).deletedCount || 0;
+  await CommunityMessage.updateMany({ 'squad.joined': userId }, { $pull: { 'squad.joined': userId } });
+  await CommunityMessage.updateMany({ 'reactions.users': userId }, { $pull: { 'reactions.$[].users': userId } });
+  await CommunityMessage.updateMany({ 'reactions.users': { $size: 0 } }, { $pull: { reactions: { users: { $size: 0 } } } });
+  await CommunityChannel.updateMany({ createdBy: userId }, { $set: { createdBy: null } });
 
   // 4. Their comments, plus replies under them, with comment counts corrected.
   let commentIds = (await Comment.find({ author: userId }).select('_id').lean()).map((c) => c._id);

@@ -131,3 +131,27 @@ dialog.modal::backdrop { background: rgb(20 18 43 / 55%); }
 }
 
 @media (prefers-reduced-motion: reduce) { .live { animation: none; } }
+
+/* ---------- Communities ---------- */
+.chip--official { background: var(--accent-soft); color: var(--accent); }
+.cadmin__icon { color: #fff; text-shadow: 0 1px 2px rgb(0 0 0 / 35%); }
+dialog.modal:has(.cadmin) { width: min(720px, calc(100% - 24px)); max-height: 92dvh; overflow-y: auto; }
+.cadmin h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cadmin h3 { margin: 0 0 8px; font-size: 15px; }
+.cadmin p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.cadmin .field textarea, .cadmin .field select, .cadmin__inline input, .cadmin__inline select { width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; font-size: 15px; }
+.cadmin .field textarea { resize: vertical; line-height: 1.45; }
+.cadmin__inline select { width: auto; }
+.cadmin .field input:focus, .cadmin .field textarea:focus, .cadmin__inline input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgb(90 63 214 / 16%); outline: 0; }
+.cadmin__color { width: 72px; height: 44px; padding: 3px !important; cursor: pointer; }
+.cadmin__section { margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.cadmin__hint { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.cadmin__inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cadmin__inline input { flex: 1 1 160px; }
+.cadmin__checks { display: flex; flex-wrap: wrap; gap: 6px 14px; max-height: 150px; padding: 10px 12px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.cadmin__check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; }
+.cadmin__people, .cadmin__posts { display: grid; gap: 8px; margin-bottom: 10px; }
+.cadmin__person, .cadmin__post { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.cadmin__person small, .cadmin__post-text small { color: var(--muted); }
+.cadmin__post-text { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.cadmin__post-text small { display: block; }

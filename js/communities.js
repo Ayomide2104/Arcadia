@@ -802,6 +802,19 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
         } catch (error) { toast(error.message); remove.disabled = false; }
       });
       foot.append(pin, remove);
+    } else if (getUser() && post.author?.username && post.author.username === getUser().username) {
+      const mine = el('button', 'cm-post-action cm-post-action--danger', 'Delete');
+      mine.type = 'button';
+      mine.addEventListener('click', async () => {
+        if (!window.confirm('Delete your post from this community?')) return;
+        mine.disabled = true;
+        try {
+          await api(`/communities/${community.slug}/posts/${post._id}`, { method: 'DELETE' });
+          toast('Your post was deleted.');
+          if (onRemoved) onRemoved(post); else card.remove();
+        } catch (error) { toast(error.message); mine.disabled = false; }
+      });
+      foot.append(mine);
     }
     main.append(foot);
     card.append(main);

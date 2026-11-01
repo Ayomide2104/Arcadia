@@ -15,3 +15,6 @@ npm-debug.log*
 coverage/
 dist/
 .test-mongo-binaries/
+.admin-communities-backup/
+.redesign-backup/
+redesign/
