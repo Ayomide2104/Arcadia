@@ -35,4 +35,6 @@ const postSchema = new mongoose.Schema({
 postSchema.index({ 'destinations.type': 1, createdAt: -1, _id: -1 });
 postSchema.index({ author: 1, createdAt: -1, _id: -1 });
 postSchema.index({ 'destinations.target': 1, score: -1, _id: -1 });
+postSchema.index({ createdAt: -1, likeCount: -1, commentCount: -1 });
+postSchema.index({ repostOf: 1 });
 module.exports = mongoose.model('Post', postSchema);

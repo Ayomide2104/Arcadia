@@ -16,6 +16,15 @@ const User = require('../models/User');
 const SeenPost = require('../models/SeenPost');
 const { getFriendIds } = require('../services/friends');
 const { notify } = require('../services/notifications');
+const FeedServed = require('../models/FeedServed');
+const FeedHide = require('../models/FeedHide');
+const UserInterest = require('../models/UserInterest');
+const { createFeedEngine } = require('../services/feedEngine');
+const { recordSignal, recordViews } = require('../services/interests');
+
+const feedEngine = createFeedEngine({
+  Post, SeenPost, FeedServed, FeedHide, UserInterest, Membership, Community, Game, getFriendIds,
+});
 
 const router = express.Router();
 
@@ -107,6 +116,15 @@ router.post('/seen', requireAuth, limitSeen, async (req, res, next) => {
       );
     }
 
+    if (existing.length) {
+      // Posts that stayed on screen are a weak sign of interest.
+      void Post.find({ _id: { $in: existing } })
+        .select('author destinations')
+        .lean()
+        .then((rows) => recordViews(req.user._id, rows))
+        .catch(() => {});
+    }
+
     return res.json({ success: true, data: { recorded: existing.length } });
   } catch (error) {
     return next(error);
@@ -114,6 +132,7 @@ router.post('/seen', requireAuth, limitSeen, async (req, res, next) => {
 });
 
 // GET /api/posts
+// The personal feed. The ranking lives in services/feedEngine.js.
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const limit = Math.min(
@@ -121,283 +140,52 @@ router.get('/', optionalAuth, async (req, res, next) => {
       30
     );
 
-    if (
-      req.query.game &&
-      !/^[a-z0-9-]{2,60}$/.test(req.query.game)
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid game filter.',
-      });
+    if (req.query.game && !/^[a-z0-9-]{2,60}$/.test(req.query.game)) {
+      return res.status(400).json({ success: false, error: 'Invalid game filter.' });
     }
 
-    const query = {
-      removedAt: null,
-      ...(req.query.game
-        ? {
-            destinations: {
-              $elemMatch: {
-                type: 'game',
-                target: req.query.game,
-              },
-            },
-          }
-        : publicFeedFilter()),
-    };
-
-    const feed =
-      typeof req.query.feed === 'string'
-        ? req.query.feed
-        : 'for-you';
+    const feed = typeof req.query.feed === 'string' ? req.query.feed : 'for-you';
 
     if (!['for-you', 'interests', 'friends'].includes(feed)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid feed.',
-      });
+      return res.status(400).json({ success: false, error: 'Invalid feed.' });
     }
 
-    // People the viewer is friends with: used by the Friends feed and as a ranking boost.
-    const friendIds = req.user ? await getFriendIds(req.user._id) : [];
-
-    if (feed === 'friends') {
+    if (feed === 'friends' && !req.query.game) {
       if (!req.user) {
         return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'signin' } });
       }
 
-      if (!friendIds.length) {
+      if (!(await getFriendIds(req.user._id)).length) {
         return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'no-friends' } });
       }
-
-      query.author = { $in: friendIds };
-
-      if (!req.query.game) {
-        query.destinations = { $elemMatch: { type: { $in: ['general', 'game'] } } };
-      }
     }
 
-    if (
-      !req.query.game &&
-      feed === 'interests' &&
-      req.user?.favoriteGames?.length
-    ) {
-      query.$or = [
-        {
-          destinations: {
-            $elemMatch: { type: 'general' },
-          },
-        },
-        {
-          destinations: {
-            $elemMatch: {
-              type: 'game',
-              target: { $in: req.user.favoriteGames },
-            },
-          },
-        },
-      ];
-    }
+    let page;
 
-    let paginationCursor = null;
-
-    if (req.query.cursor) {
-      try {
-        paginationCursor = JSON.parse(
-          Buffer.from(req.query.cursor, 'base64url').toString('utf8')
-        );
-      } catch {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid pagination cursor.',
-        });
-      }
-
-      if (
-        typeof paginationCursor.score !== 'number' ||
-        !validId(paginationCursor.id)
-      ) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid pagination cursor.',
-        });
-      }
-    }
-
-    // Posts seen before this moment are ranked lower. The time travels in the
-    // pagination cursor so a page you just viewed cannot reappear on the next page.
-    const seenBefore = new Date(
-      typeof paginationCursor?.t === 'number' ? paginationCursor.t : Date.now()
-    );
-
-    const candidateBatchSize = 200;
-    let candidateAfter = null;
-    const genreMap = new Map();
-    const friendSet = new Set(friendIds.map(String));
-    const seenSet = new Set();
-    const ranked = [];
-    const now = seenBefore.getTime();
-
-    // Scan newest-to-oldest in bounded batches. Ranking is still performed
-    // across every candidate that could outrank the current page, rather than
-    // imposing a permanent 200-post ceiling on the feed.
-    while (true) {
-      const batchQuery = candidateAfter
-        ? {
-            $and: [
-              query,
-              {
-                $or: [
-                  { createdAt: { $lt: candidateAfter.createdAt } },
-                  {
-                    createdAt: candidateAfter.createdAt,
-                    _id: { $lt: candidateAfter._id },
-                  },
-                ],
-              },
-            ],
-          }
-        : query;
-
-      const batch = await Post.find(batchQuery)
-        .sort({ createdAt: -1, _id: -1 })
-        .limit(candidateBatchSize)
-        .populate('author', 'username displayName avatar')
-        .lean();
-
-      if (!batch.length) break;
-
-      candidateAfter = batch[batch.length - 1];
-
-      const gameSlugs = [
-        ...new Set(
-          batch.flatMap((post) =>
-            post.destinations
-              .filter((destination) => destination.type === 'game')
-              .map((destination) => destination.target)
-          )
-        ),
-      ];
-
-      if (gameSlugs.length) {
-        const games = await Game.find({ slug: { $in: gameSlugs } })
-          .select('slug genres')
-          .lean();
-
-        for (const game of games) {
-          genreMap.set(game.slug, game.genres || []);
-        }
-      }
-
-      if (req.user) {
-        const seenRows = await SeenPost.find({
-          user: req.user._id,
-          post: { $in: batch.map((post) => post._id) },
-          seenAt: { $lt: seenBefore },
-        })
-          .select('post')
-          .lean();
-
-        for (const row of seenRows) seenSet.add(String(row.post));
-      }
-
-      const rankedBatch = batch.map((post) => {
-        const hours = Math.max(
-          0,
-          (now - new Date(post.createdAt).getTime()) / 3600000
-        );
-
-        const gameTargets = post.destinations
-          .filter((destination) => destination.type === 'game')
-          .map((destination) => destination.target);
-
-        const gameMatch = gameTargets.some((slug) =>
-          req.user?.favoriteGames?.includes(slug)
-        );
-
-        const genreMatch = (req.user?.genres || []).some((genre) =>
-          gameTargets.some((slug) => genreMap.get(slug)?.includes(genre))
-        );
-
-        const recency = 4 * Math.exp(-hours / 72);
-        const friendBoost = friendSet.has(String(post.author?._id)) ? 1.5 : 0;
-        const seenPenalty = seenSet.has(String(post._id)) ? 6 : 0;
-        const interests = (gameMatch ? 3 : 0) + (genreMatch ? 1.5 : 0);
-        const engagement = Math.min(
-          1,
-          Math.log1p(
-            (post.likeCount || 0) +
-              (post.commentCount || 0) +
-              (post.repostCount || 0)
-          ) * 0.18
-        );
-
-        return {
-          ...post,
-          _rank: recency + interests + engagement + friendBoost - seenPenalty,
-        };
+    try {
+      page = await feedEngine.buildFeedPage({
+        user: req.user || null,
+        feed,
+        game: req.query.game || null,
+        limit,
+        cursor: typeof req.query.cursor === 'string' ? req.query.cursor : null,
       });
-
-      ranked.push(...rankedBatch);
-      ranked.sort(
-        (a, b) =>
-          b._rank - a._rank ||
-          String(b._id).localeCompare(String(a._id))
-      );
-
-      if (batch.length < candidateBatchSize) break;
-
-      // The maximum possible score for any unscanned post is its maximum
-      // recency score plus the capped interest, engagement, and friend boosts:
-      // 4 + 3 + 1.5 + 1 + 1.5 = 11. We can stop only when even that upper
-      // bound is strictly below the last item needed for this page. A strict
-      // comparison preserves deterministic tie-breaking.
-      const afterCursor = req.query.cursor
-        ? ranked.filter(
-            (post) =>
-              post._rank < paginationCursor.score ||
-              (post._rank === paginationCursor.score &&
-                String(post._id).localeCompare(paginationCursor.id) < 0)
-          )
-        : ranked;
-
-      if (afterCursor.length > limit) {
-        const pageBoundary = afterCursor[limit - 1];
-        const oldestCandidateTime = new Date(candidateAfter.createdAt).getTime();
-        const oldestHours = Math.max(0, (now - oldestCandidateTime) / 3600000);
-        const unseenUpperBound = 4 * Math.exp(-oldestHours / 72) + 7;
-
-        if (unseenUpperBound < pageBoundary._rank) break;
+    } catch (error) {
+      if (error.status === 400) {
+        return res.status(400).json({ success: false, error: error.message });
       }
+
+      throw error;
     }
 
-    let after = ranked;
-
-    if (req.query.cursor) {
-      after = ranked.filter(
-        (post) =>
-          post._rank < paginationCursor.score ||
-          (post._rank === paginationCursor.score &&
-            String(post._id).localeCompare(paginationCursor.id) < 0)
-      );
-    }
-
-    const items = after
-      .slice(0, limit)
-      .map(({ _rank, ...post }) => post);
+    const items = page.items;
 
     if (req.user && items.length) {
       const ids = items.map((post) => post._id);
 
       const [liked, reposted] = await Promise.all([
-        Reaction.find({
-          user: req.user._id,
-          post: { $in: ids },
-        }).distinct('post'),
-
-        Repost.find({
-          user: req.user._id,
-          post: { $in: ids },
-        }).distinct('post'),
+        Reaction.find({ user: req.user._id, post: { $in: ids } }).distinct('post'),
+        Repost.find({ user: req.user._id, post: { $in: ids } }).distinct('post'),
       ]);
 
       const likedSet = new Set(liked.map(String));
@@ -409,26 +197,96 @@ router.get('/', optionalAuth, async (req, res, next) => {
       }
     }
 
-    const last = after[Math.min(limit, after.length) - 1];
+    return res.json({
+      success: true,
+      data: { items, nextCursor: page.nextCursor, caughtUp: page.caughtUp },
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
-    const nextCursor =
-      after.length > limit && last
-        ? Buffer.from(
-            JSON.stringify({
-              score: last._rank,
-              id: String(last._id),
-              t: seenBefore.getTime(),
-            })
-          ).toString('base64url')
-        : null;
+// Hide a post, show less like it, or mute its author.
+const limitHide = rateLimit({ name: 'feed-hide', max: 120, windowMs: 15 * 60 * 1000 });
+
+router.post('/:id/hide', requireAuth, limitHide, async (req, res, next) => {
+  try {
+    const mode = req.body?.mode;
+
+    if (!validId(req.params.id) || !['post', 'less', 'author'].includes(mode)) {
+      return res.status(400).json({ success: false, error: 'Choose what to hide.' });
+    }
+
+    const post = await findVisiblePost(req.params.id, req);
+
+    if (!post) {
+      return res.status(404).json({ success: false, error: 'Post not found.' });
+    }
+
+    if (mode === 'author' && String(post.author) === String(req.user._id)) {
+      return res.status(400).json({ success: false, error: 'You cannot mute yourself.' });
+    }
+
+    const keep = async (kind, target, expires) => {
+      await FeedHide.updateOne(
+        { user: req.user._id, kind, target },
+        { $setOnInsert: { user: req.user._id, kind, target, expireAt: expires } },
+        { upsert: true }
+      );
+    };
+    const ninetyDays = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+
+    await keep('post', post._id, ninetyDays);
+
+    if (mode === 'author') await keep('author', post.author, null);
+
+    void recordSignal(
+      req.user._id,
+      post,
+      mode === 'author' ? 'muteAuthor' : mode === 'less' ? 'hideLess' : 'hidePost'
+    );
 
     return res.json({
       success: true,
-      data: {
-        items,
-        nextCursor,
-      },
+      data: { hidden: true, mode, author: String(post.author) },
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Undo a hide or a mute.
+router.delete('/hidden/:kind/:id', requireAuth, async (req, res, next) => {
+  try {
+    if (!['post', 'author'].includes(req.params.kind) || !validId(req.params.id)) {
+      return res.status(400).json({ success: false, error: 'Nothing to undo.' });
+    }
+
+    await FeedHide.deleteOne({
+      user: req.user._id,
+      kind: req.params.kind,
+      target: req.params.id,
+    });
+
+    return res.json({ success: true, data: { undone: true } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Players the signed-in user has muted.
+router.get('/hidden/authors', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await FeedHide.find({ user: req.user._id, kind: 'author' })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .select('target')
+      .lean();
+    const users = await User.find({ _id: { $in: rows.map((row) => row.target) } })
+      .select('username displayName avatar')
+      .lean();
+
+    return res.json({ success: true, data: { items: users } });
   } catch (error) {
     return next(error);
   }
@@ -792,6 +650,8 @@ router.post('/:id/like', requireAuth, async (req, res, next) => {
         post: post._id,
         key: `like:${post._id}:${req.user._id}`,
       });
+
+      void recordSignal(req.user._id, post, 'like');
     }
 
     const liked = await Reaction.exists({
@@ -907,6 +767,8 @@ router.post('/:id/repost', requireAuth, async (req, res, next) => {
         post: post._id,
         key: `repost:${post._id}:${req.user._id}`,
       });
+
+      void recordSignal(req.user._id, post, 'repost');
     }
 
     return res.json({
@@ -1123,6 +985,8 @@ router.post(
           key: `comment:${comment._id}`,
         });
       }
+
+      void recordSignal(req.user._id, post, 'comment');
 
       await comment.populate('author', 'username displayName avatar');
 

@@ -9,6 +9,7 @@ const Game = require('../models/Game');
 const User = require('../models/User');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
+const { recordCommunityJoin } = require('../services/interests');
 const router = express.Router();
 const discoveryLimit = rateLimit({ name: 'community-search', max: 120, windowMs: 15 * 60 * 1000 });
 const communityPostLimit = rateLimit({ name: 'community-post', max: 20, windowMs: 15 * 60 * 1000 });
@@ -234,7 +235,7 @@ router.post('/:slug/join', requireAuth, async (req, res, next) => {
     let result;
     try { result = await Membership.updateOne({ community: community._id, user: req.user._id }, { $setOnInsert: { community: community._id, user: req.user._id, role } }, { upsert: true }); }
     catch (error) { if (error.code !== 11000) throw error; result = { upsertedCount: 0 }; }
-    if (result.upsertedCount) await Community.updateOne({ _id: community._id }, { $inc: { memberCount: 1 } });
+    if (result.upsertedCount) { await Community.updateOne({ _id: community._id }, { $inc: { memberCount: 1 } }); void recordCommunityJoin(req.user._id, community.slug); }
     const count = await Membership.countDocuments({ community: community._id });
     res.json({ success: true, data: { joined: true, memberCount: count } });
   } catch (error) { next(error); }

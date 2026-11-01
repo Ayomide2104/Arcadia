@@ -3,6 +3,12 @@ import { setAvatar, isPhotoAvatar, prepareAvatarFile } from './avatar.js';
 import { createOnboarding } from './onboarding.js';
 import { createGames } from './games.js';
 import { createCommunities } from './communities.js';
+import { createSeenTracker } from './seen.js';
+import { createFeedExtras } from './feedExtras.js';
+
+// Records which posts a player has actually looked at, so the feed never repeats them.
+const seenTracker = createSeenTracker({ api: (path, options) => api(path, options), isSignedIn: () => Boolean(currentUser) });
+const feedExtras = createFeedExtras({ api: (path, options) => api(path, options), toast: (message) => toast(message), getUser: () => currentUser });
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
@@ -526,7 +532,15 @@ async function loadFeed(filter = activeFeed, cursor = null) {
     // Community posts can have a title; show it above the text in the shared post card.
     const items = (result.items || []).map((item) => (filter === 'groups' ? { ...item, body: [item.title, item.body].filter(Boolean).join('\n\n') } : item));
 
-    list.append(...items.map(renderPost));
+    for (const item of items) {
+      if (item.feed?.divider) list.append(feedExtras.divider());
+      const node = renderPost(item);
+      if (filter !== 'groups') {
+        feedExtras.decorate(node, item);
+        seenTracker.observe(node);
+      }
+      list.append(node);
+    }
 
     feedCursor = result.nextCursor || null;
 
@@ -537,7 +551,7 @@ async function loadFeed(filter = activeFeed, cursor = null) {
     }
 
     if (!items.length && !cursor && result.unavailable) {
-      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Friends feed is coming later</h2><p>Friend connections are part of the next approved phase.</p>';
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Add friends to fill this feed</h2><p>Posts from your friends show up here once you connect.</p>';
       return;
     }
 

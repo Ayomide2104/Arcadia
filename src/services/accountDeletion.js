@@ -14,6 +14,9 @@ const SeenPost = require('../models/SeenPost');
 const Vote = require('../models/Vote');
 const CommunityMessage = require('../models/CommunityMessage');
 const CommunityChannel = require('../models/CommunityChannel');
+const FeedServed = require('../models/FeedServed');
+const FeedHide = require('../models/FeedHide');
+const UserInterest = require('../models/UserInterest');
 const DailyActive = require('../models/DailyActive');
 const cloudinary = require('../config/cloudinary');
 const { removeOwnedImage } = require('./media');
@@ -94,6 +97,8 @@ async function removePosts(postIds) {
   summary.reposts = (await Repost.deleteMany({ post: { $in: ids } })).deletedCount || 0;
   await Notification.deleteMany({ post: { $in: ids } });
   await SeenPost.deleteMany({ post: { $in: ids } });
+  await FeedServed.deleteMany({ post: { $in: ids } });
+  await FeedHide.deleteMany({ kind: 'post', target: { $in: ids } });
   summary.images = await destroyMedia(all);
   summary.posts = (await Post.deleteMany({ _id: { $in: ids } })).deletedCount || 0;
   return summary;
@@ -209,6 +214,9 @@ async function deleteUserAndData(userId, { io = null } = {}) {
   // 8. Notifications, seen records and activity history.
   await Notification.deleteMany({ $or: [{ recipient: userId }, { actor: userId }] });
   await SeenPost.deleteMany({ user: userId });
+  await FeedServed.deleteMany({ user: userId });
+  await FeedHide.deleteMany({ $or: [{ user: userId }, { kind: 'author', target: userId }] });
+  await UserInterest.deleteOne({ user: userId });
   await DailyActive.deleteMany({ user: userId });
 
   // 9. Their profile photo and banner.
