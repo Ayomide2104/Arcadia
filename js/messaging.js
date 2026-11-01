@@ -1,5 +1,4 @@
 import { setAvatar } from './avatar.js';
-import { presence } from './presence.js';
 import { io } from 'socket.io-client';
 
 /*
@@ -330,7 +329,6 @@ export function createMessaging({ api, getCurrentUser, toast }) {
         (person.displayName || person.username).slice(0, 1).toUpperCase()
       );
       setAvatar(avatar, person.avatar, avatar.textContent);
-      presence.mark(avatar, person.username);
 
       const details = element('span', 'arc-chat-list-details');
 
@@ -394,10 +392,9 @@ export function createMessaging({ api, getCurrentUser, toast }) {
     activeUsername = friend.username;
 
     chatName.textContent = friend.displayName || friend.username;
-    presence.bindLabel(chatStatus, friend.username, `@${friend.username}`);
+    chatStatus.textContent = `@${friend.username}`;
     chatAvatar.textContent = (friend.displayName || friend.username).slice(0, 1).toUpperCase();
     setAvatar(chatAvatar, friend.avatar, chatAvatar.textContent);
-  presence.mark(chatAvatar, friend.username);
 
     panel.hidden = false;
     emptyState.hidden = true;
@@ -436,7 +433,6 @@ export function createMessaging({ api, getCurrentUser, toast }) {
       chatStatus.textContent = `@${activeFriend.username}`;
       chatAvatar.textContent = (activeFriend.displayName || activeFriend.username).slice(0, 1).toUpperCase();
       setAvatar(chatAvatar, activeFriend.avatar, chatAvatar.textContent);
-      presence.mark(chatAvatar, activeFriend.username);
 
       renderMessages(result.items || []);
       await markConversationRead(friend.username);
@@ -579,10 +575,7 @@ export function createMessaging({ api, getCurrentUser, toast }) {
 
       socket.on('connect', () => {
         void refreshConversations();
-        presence.handle({ reconnect: true });
       });
-
-      socket.on('presence:update', (payload) => presence.handle(payload));
 
       socket.on('message:new', handleIncomingMessage);
       socket.on('message:read', handleReadReceipt);
@@ -600,7 +593,6 @@ export function createMessaging({ api, getCurrentUser, toast }) {
       socket = null;
     }
 
-    presence.reset();
     activeUsername = null;
     activeFriend = null;
     conversations = [];

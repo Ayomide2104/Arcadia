@@ -475,3 +475,64 @@
     transition: none;
   }
 }
+
+/* ---------- Dark theme: top bar icon buttons ----------
+   They fell back to a white fill with a white icon in dark mode. */
+html[data-theme="dark"] .icon-button {
+  border: 1px solid rgb(255 255 255 / 0.14);
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: none;
+  color: #f4f5fb;
+}
+
+html[data-theme="dark"] .icon-button:hover {
+  background: rgb(255 255 255 / 0.13);
+}
+
+html[data-theme="dark"] .icon-button svg {
+  stroke: #f4f5fb;
+}
+
+/* ---------- Dark theme: controls that fell back to light fills ----------
+   Composer, secondary buttons, feed tabs and the active nav item were
+   light grey with light text in dark mode. */
+html[data-theme="dark"] .composer {
+  border-color: rgb(255 255 255 / 0.12) !important;
+  background: rgb(255 255 255 / 0.06) !important;
+  color: #a7abbd !important;
+}
+
+html[data-theme="dark"] .button:not(.button--primary):not(.button--danger) {
+  border: 1px solid rgb(255 255 255 / 0.14);
+  background: rgb(255 255 255 / 0.07);
+  color: #f4f5fb;
+}
+
+html[data-theme="dark"] .button:not(.button--primary):not(.button--danger):hover {
+  background: rgb(255 255 255 / 0.13);
+}
+
+html[data-theme="dark"] .feed-tabs {
+  border-color: rgb(255 255 255 / 0.12) !important;
+  background: rgb(255 255 255 / 0.06) !important;
+  background-image: none !important;
+}
+
+html[data-theme="dark"] .feed-tab {
+  color: #c4c8da;
+}
+
+html[data-theme="dark"] .feed-tab.is-selected {
+  background: rgb(169 154 255 / 0.22) !important;
+  background-image: none !important;
+  color: #fff !important;
+}
+
+html[data-theme="dark"] .feed-tab:not(.is-selected) {
+  color: #c4c8da !important;
+}
+
+html[data-theme="dark"] .nav-item.is-active {
+  background: rgb(169 154 255 / 0.18);
+  color: #d4ccff;
+}

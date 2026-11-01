@@ -2,7 +2,6 @@ const crypto = require('node:crypto');
 const { Server } = require('socket.io');
 const Session = require('./models/Session');
 const User = require('./models/User');
-const presence = require('./services/presence');
 
 function getAllowedOrigins() {
   const isDeployed =
@@ -143,11 +142,11 @@ function attachSocketServer(httpServer, app) {
     // Clients cannot choose another user's private room.
     socket.join(`user:${userId}`);
 
-    void presence.connected(io, socket);
+    // Community group chat: subscribe, typing and presence.
+    require('./communitySocket').attachCommunitySocket(io, socket);
 
     socket.on('disconnect', () => {
-      // Socket.IO removes the socket from its rooms; presence tracks the rest.
-      presence.disconnected(io, socket);
+      // Socket.IO automatically removes the socket from its rooms.
     });
   });
 

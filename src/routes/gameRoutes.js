@@ -62,7 +62,7 @@ function escapeRegex(value) {
 
 router.get('/', catalogLimit, async (req, res, next) => {
   try {
-    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 30, 1), 50);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 30, 1), 100);
     const query = { active: true };
     if (typeof req.query.q === 'string' && req.query.q.trim()) {
       const term = escapeRegex(req.query.q.trim().slice(0, 40));

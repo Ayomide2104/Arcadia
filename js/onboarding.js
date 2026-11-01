@@ -129,7 +129,7 @@ export function createOnboarding({ api, getUser, setUser, onFinish }) {
     /* ---------- Step 2: games ---------- */
     async function loadCatalogue() {
       if (state.catalogue) return state.catalogue;
-      const data = await api('/games?limit=50');
+      const data = await api('/games?limit=100');
       state.catalogue = data.items || [];
       return state.catalogue;
     }

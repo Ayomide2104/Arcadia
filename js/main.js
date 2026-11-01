@@ -1,11 +1,8 @@
 import { createMessaging } from './messaging.js';
-import { setAvatar, isPhotoAvatar, prepareAvatarFile, prepareBannerFile, applyBanner } from './avatar.js';
-import { createNotifications } from './notifications.js';
-import { createSeenTracker } from './seen.js';
-import { presence } from './presence.js';
-
-const seenTracker = createSeenTracker({ api: (path, options) => api(path, options), isSignedIn: () => Boolean(currentUser) });
+import { setAvatar, isPhotoAvatar, prepareAvatarFile } from './avatar.js';
 import { createOnboarding } from './onboarding.js';
+import { createGames } from './games.js';
+import { createCommunities } from './communities.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
@@ -13,7 +10,6 @@ const composerDialog = $('#composer-dialog');
 const authForm = $('#auth-form');
 let authMode = 'login';
 let currentUser = null;
-let notifications = null;
 let returnTo = null;
 let destinationChoicesLoaded = false;
 let csrfToken = null;
@@ -122,7 +118,8 @@ window.addEventListener('scroll', () => {
 
 $$('.feed-tab').forEach((tab, index) => {
   tab.addEventListener('click', () => {
-    if (tab.dataset.filter === 'groups') { toast('Group posts are not available in the feed API yet.'); return; }
+    if (tab.dataset.filter === 'friends') { toast('Friends feed will unlock with friend connections.'); return; }
+    if (tab.dataset.filter === 'groups' && !currentUser) { openAuth(); return; }
     $$('.feed-tab').forEach((item) => {
       const active = item === tab;
       item.classList.toggle('is-selected', active);
@@ -150,6 +147,8 @@ $('#auth-open').addEventListener('click', async () => {
   currentUser = null;
   csrfToken = null;
   syncMessagingSession();
+  gamesPage.reset();
+  communitiesPage.reset();
   updateSignedInUI();
   toast('You’re signed out.');
 });
@@ -435,8 +434,6 @@ function updateSignedInUI() {
   $('#auth-avatar').setAttribute('aria-label', currentUser ? `Signed in as ${currentUser.username}` : 'Sign in to your profile');
   if ($('#comments-form')) { $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser); }
   setAvatar($('.avatar--composer'), currentUser?.avatar, currentUser?.username?.[0]?.toUpperCase() || '?');
-  if (currentUser) notifications?.refresh(); else notifications?.reset();
-  presence.sync();
   $$('[data-action="signin"]').forEach((button) => {
     if (!button.dataset.originalLabel) button.dataset.originalLabel = button.textContent;
     if (currentUser) {
@@ -521,33 +518,26 @@ async function loadFeed(filter = activeFeed, cursor = null) {
 
   try {
     const result = await api(
-      `/posts?feed=${encodeURIComponent(filter)}&limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
+      `${filter === 'groups' ? '/communities/feed?' : `/posts?feed=${encodeURIComponent(filter)}&`}limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
     );
 
     if (generation !== feedGeneration) return;
 
-    const items = result.items || [];
+    // Community posts can have a title; show it above the text in the shared post card.
+    const items = (result.items || []).map((item) => (filter === 'groups' ? { ...item, body: [item.title, item.body].filter(Boolean).join('\n\n') } : item));
 
-    list.append(...items.map((item) => { const node = renderPost(item); seenTracker.observe(node); return node; }));
+    list.append(...items.map(renderPost));
 
     feedCursor = result.nextCursor || null;
 
-    if (!items.length && !cursor && (result.unavailable || filter === 'friends')) {
-      const signedOut = result.unavailable === 'signin';
-      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/>';
-      const heading = document.createElement('h2');
-      const note = document.createElement('p');
-      heading.textContent = signedOut ? 'Sign in to see your friends' : result.unavailable ? 'Your friends feed is waiting' : 'Your friends haven’t posted yet';
-      note.textContent = signedOut ? 'Posts from the people you add will show up here.' : result.unavailable ? 'Add friends and their posts will show up here.' : 'When they post, you’ll see it here first.';
-      state.append(heading, note);
-      if (signedOut || result.unavailable) {
-        const action = document.createElement('button');
-        action.className = 'button button--primary';
-        action.type = 'button';
-        action.textContent = signedOut ? 'Sign in' : 'Find friends';
-        action.addEventListener('click', () => (signedOut ? openAuth() : selectView('friends')));
-        state.append(action);
-      }
+    if (!items.length && !cursor && filter === 'groups') {
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>No community posts yet</h2><p>Join a few communities and their posts will show up here.</p><button class="button button--primary" type="button" id="feed-find-communities">Find communities</button>';
+      $('#feed-find-communities')?.addEventListener('click', () => selectView('groups'));
+      return;
+    }
+
+    if (!items.length && !cursor && result.unavailable) {
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Friends feed is coming later</h2><p>Friend connections are part of the next approved phase.</p>';
       return;
     }
 
@@ -1313,72 +1303,35 @@ function addReplyForm(postId,parentId,anchor){if($('.reply-form',anchor.parentEl
 function createOwnerTools(slug){const form=document.createElement('form');form.className='community-owner-tools glass-panel';const title=document.createElement('h3');title.textContent='Manage moderators';const username=document.createElement('input');username.placeholder='Member username';username.pattern='[A-Za-z0-9_]{3,24}';username.required=true;username.setAttribute('aria-label','Member username');const role=document.createElement('select');role.setAttribute('aria-label','Member role');for(const value of ['moderator','member']){const option=document.createElement('option');option.value=value;option.textContent=value==='moderator'?'Make moderator':'Make member';role.append(option);}const submit=document.createElement('button');submit.className='button';submit.type='submit';submit.textContent='Update role';form.append(title,username,role,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{await api(`/communities/${slug}/members/${encodeURIComponent(username.value)}/role`,{method:'PATCH',body:JSON.stringify({role:role.value})});toast('Member role updated.');}catch(error){toast(error.message);}finally{submit.disabled=false;}});return form;}
 async function openPostDetail(postId){let modal=$('#post-detail-dialog');if(!modal){modal=document.createElement('dialog');modal.id='post-detail-dialog';modal.className='auth-dialog glass-panel';document.body.append(modal);}modal.replaceChildren();const title=document.createElement('h2');title.textContent='Post discussion';const loading=document.createElement('p');loading.textContent='Loading conversation…';modal.append(title,loading);if(!modal.open)modal.showModal();try{const data=await api(`/posts/${postId}`);modal.replaceChildren(title);const body=document.createElement('p');body.className='post-card__body';body.textContent=data.post.body;modal.append(body);const list=document.createElement('div');list.className='post-comments';for(const comment of data.comments){const line=renderComment(comment);if(comment.parent)line.classList.add('comment-reply');list.append(line);if(currentUser&&!comment.parent){const reply=document.createElement('button');reply.className='text-button';reply.type='button';reply.textContent='Reply';reply.addEventListener('click',()=>addReplyForm(postId,comment._id,line));line.append(reply);}}modal.append(list);if(currentUser){const form=document.createElement('form');form.className='comment-form';const input=document.createElement('input');input.required=true;input.maxLength=1000;input.placeholder='Add to the conversation';const send=document.createElement('button');send.type='submit';send.textContent='Comment';form.append(input,send);form.addEventListener('submit',async(event)=>{event.preventDefault();send.disabled=true;try{const result=await api(`/posts/${postId}/comments`,{method:'POST',body:JSON.stringify({body:input.value})});list.append(renderComment(result.comment));input.value='';toast('Comment added.');}catch(error){toast(error.message);}finally{send.disabled=false;}});modal.append(form);}else{const signIn=document.createElement('button');signIn.type='button';signIn.className='button button--primary';signIn.textContent='Sign in to comment';signIn.addEventListener('click',()=>{modal.close();openAuth({type:'comment',id:postId});});modal.append(signIn);}}catch(error){loading.textContent=error.message;}}
 
-let gamesLoaded = false;
-async function loadGames(search = '') {
-  const host = $('#view-games .section-placeholder');
-  if (!host) return;
-  host.className = 'catalog-view';
-  if (!gamesLoaded) host.innerHTML = '<div class="catalog-toolbar"><label class="sr-only" for="game-search">Search games</label><input id="game-search" type="search" placeholder="Search games…" /><span>CATALOG</span></div><div class="catalog-grid" id="game-grid"></div>';
-  gamesLoaded = true;
-  const grid = $('#game-grid', host);
-  grid.innerHTML = '<p class="catalog-message">Loading games…</p>';
-  try {
-    const result = await api(`/games?limit=50${search ? `&q=${encodeURIComponent(search)}` : ''}`);
-    grid.replaceChildren();
-    if (!result.items.length) { grid.innerHTML = '<p class="catalog-message">No games found. Try another search.</p>'; return; }
-    for (const game of result.items) {
-      const card = document.createElement('article'); card.className = 'game-card glass-panel'; card.style.setProperty('--game-accent', game.accent || '#8b7df6');
-      const monogram = document.createElement('span'); monogram.className = 'game-monogram'; monogram.textContent = game.name.split(/\s+/).map((word) => word[0]).slice(0,2).join('').toUpperCase();
-      const name = document.createElement('h2'); name.textContent = game.name;
-      const desc = document.createElement('p'); desc.textContent = game.genres.join(' · ');
-      const follow = document.createElement('button'); follow.className = 'game-follow'; follow.type = 'button';
-      let followed = currentUser?.favoriteGames?.includes(game.slug) || false;
-      follow.textContent = followed ? 'Following' : '+ Follow';
-      follow.setAttribute('aria-pressed', String(followed));
-      follow.addEventListener('click', async () => {
-        if (!currentUser) return openAuth({ type:'game-interest',slug:game.slug });
-        follow.disabled = true;
-        try { const data = await api(`/games/${game.slug}/interest`, { method:'PUT',body:JSON.stringify({ interested:!followed }) }); followed = data.interested; follow.textContent = followed ? 'Following' : '+ Follow'; follow.setAttribute('aria-pressed',String(followed)); currentUser.favoriteGames = currentUser.favoriteGames || []; currentUser.favoriteGames = followed ? [...new Set([...currentUser.favoriteGames,game.slug])] : currentUser.favoriteGames.filter((slug)=>slug!==game.slug); toast(followed ? `${game.name} added to your games.` : `${game.name} removed from your games.`); }
-        catch(error) { toast(error.message); }
-        finally { follow.disabled = false; }
-      });
-      card.append(monogram,name,desc,follow); grid.append(card);
-    }
-    $('#game-search',host).oninput = (event) => { window.clearTimeout(loadGames.timer); loadGames.timer = window.setTimeout(() => loadGames(event.target.value.trim()),250); };
-  } catch(error) { grid.innerHTML = ''; const message=document.createElement('p'); message.className='catalog-message'; message.textContent=error.message; grid.append(message); }
-}
+/* The Games and Communities pages live in js/games.js and js/communities.js. */
+const gamesPage = createGames({
+  api,
+  getUser: () => currentUser,
+  toast,
+  openAuth,
+  gameInfo: getArcadiaGame,
+  gameTheme: arcGameTheme,
+  gameFont: getArcadiaGameFont,
+  detailPage: arcDetailPage,
+  navigate: (view) => selectView(view),
+  openCommunity: (slug) => communitiesPage.open(slug),
+  createCommunity: (prefill) => communitiesPage.openCreate(prefill),
+  findCommunities: (slug) => communitiesPage.openExplore({ game: slug })
+});
 
-let communitiesLoaded = false;
-async function loadCommunities(search = '') {
-  const host = $('#view-groups .section-placeholder');
-  if (!host) return;
-  host.className = 'catalog-view';
-  if (!communitiesLoaded) host.innerHTML = '<div class="catalog-toolbar"><label class="sr-only" for="community-search">Search communities</label><input id="community-search" type="search" placeholder="Search communities…" /><span>DISCOVER</span></div><div class="catalog-grid" id="community-grid"></div>';
-  communitiesLoaded = true;
-  const grid=$('#community-grid',host); grid.innerHTML='<p class="catalog-message">Finding your communities…</p>';
-  try {
-    const result=await api(`/communities?limit=50${search?`&q=${encodeURIComponent(search)}`:''}`);
-    grid.replaceChildren();
-    if (!result.items.length) { grid.innerHTML='<p class="catalog-message">No communities found.</p>'; return; }
-    for (const community of result.items) {
-      const card=document.createElement('article');card.className='community-card glass-panel';card.style.setProperty('--game-accent',community.accent||'#68d6bd');
-      const icon=document.createElement('span');icon.className='community-icon';icon.textContent=community.name.split(/\s+/).map((word)=>word[0]).slice(0,2).join('').toUpperCase();
-      const name=document.createElement('h2');name.textContent=community.name;
-      const desc=document.createElement('p');desc.textContent=community.description;
-      const count=document.createElement('span');count.className='community-count';count.textContent=`${community.memberCount||0} members`;
-      const join=document.createElement('button');join.className='game-follow';join.type='button';join.textContent='Join group';
-      join.addEventListener('click',async()=>{if(!currentUser)return openAuth({type:'join-community',slug:community.slug});join.disabled=true;try{const data=await api(`/communities/${community.slug}/join`,{method:'POST'});join.textContent='Joined';count.textContent=`${data.memberCount} members`;toast(`You joined ${community.name}.`);}catch(error){toast(error.message);}finally{join.disabled=false;}});
-      const view=document.createElement('button');view.className='text-button';view.type='button';view.textContent='Open community';view.addEventListener('click',()=>openCommunity(community.slug));
-      card.append(icon,name,desc,count,join,view);grid.append(card);
-    }
-    $('#community-search',host).oninput=(event)=>{window.clearTimeout(loadCommunities.timer);loadCommunities.timer=window.setTimeout(()=>loadCommunities(event.target.value.trim()),250);};
-  } catch(error) { grid.replaceChildren();const message=document.createElement('p');message.className='catalog-message';message.textContent=error.message;grid.append(message); }
-}
+const communitiesPage = createCommunities({
+  api,
+  getUser: () => currentUser,
+  toast,
+  openAuth,
+  gameInfo: getArcadiaGame,
+  navigate: (view) => selectView(view),
+  openGame: (slug) => gamesPage.openGame(slug)
+});
 
-async function openCommunity(slug){
-  selectedCommunity=null;const host=$('#view-groups .section-placeholder');if(!host)return;host.className='community-detail';host.replaceChildren();const back=document.createElement('button');back.className='text-button';back.type='button';back.textContent='← All groups';back.addEventListener('click',()=>{communitiesLoaded=false;selectedCommunity=null;loadCommunities();});host.append(back);const heading=document.createElement('h2');heading.textContent='Loading community…';host.append(heading);const details=document.createElement('div');details.className='glass-panel community-rules';host.append(details);const feed=document.createElement('div');feed.className='post-list';host.append(feed);
-  try{const data=await api(`/communities/${encodeURIComponent(slug)}/posts?limit=20`);const community=data.community;heading.textContent=community.name;details.replaceChildren();const description=document.createElement('p');description.textContent=community.description;const rulesTitle=document.createElement('h3');rulesTitle.textContent='Community rules';const rules=document.createElement('ul');for(const text of community.rules||[]){const item=document.createElement('li');item.textContent=text;rules.append(item);}details.append(description,rulesTitle,rules);if(data.role){const leave=document.createElement('button');leave.className='button';leave.type='button';leave.textContent=data.role==='owner'?'Owner':'Leave community';leave.disabled=data.role==='owner';leave.addEventListener('click',async()=>{leave.disabled=true;try{await api(`/communities/${slug}/join`,{method:'DELETE'});toast('You left the community.');await openCommunity(slug);}catch(error){toast(error.message);leave.disabled=false;}});host.insertBefore(leave,feed);}const compose=document.createElement('button');compose.className='button button--primary';compose.type='button';compose.textContent=data.role?'Post to this community':'Join to take part';compose.addEventListener('click',async()=>{if(!currentUser){openAuth({type:'community',slug});return;}if(!data.role){compose.disabled=true;try{await api(`/communities/${slug}/join`,{method:'POST'});toast('You joined the community.');await openCommunity(slug);}catch(error){toast(error.message);compose.disabled=false;}return;}selectedCommunity={slug,name:community.name};composePost();});host.insertBefore(compose,feed);if(data.role==='owner')host.insertBefore(createOwnerTools(slug),feed);for(const post of data.items){const card=renderPost(post);if(['owner','moderator'].includes(data.role)){const remove=document.createElement('button');remove.className='text-button';remove.type='button';remove.textContent='Remove post';remove.addEventListener('click',async()=>{remove.disabled=true;try{await api(`/communities/${slug}/posts/${post._id}`,{method:'DELETE'});card.remove();toast('Post removed from this community.');}catch(error){toast(error.message);remove.disabled=false;}});card.append(remove);}feed.append(card);}if(!data.items.length){const empty=document.createElement('p');empty.className='catalog-message';empty.textContent='No posts here yet. Start the conversation.';feed.append(empty);}}catch(error){details.textContent=error.message;}
-}
+function loadGames() { void gamesPage.show(); }
+function loadCommunities() { void communitiesPage.show(); }
+function openCommunity(slug) { communitiesPage.open(slug); }
 
 async function loadUpdates() {
   const host=$('#view-updates .section-placeholder');
@@ -1396,7 +1349,7 @@ async function loadUpdates() {
   }
   const toolbar=document.createElement('div');toolbar.className='updates-toolbar';const filter=document.createElement('select');filter.setAttribute('aria-label','Filter game updates');const all=document.createElement('option');all.value='all';all.textContent='All followed games';filter.append(all);const list=document.createElement('div');list.className='updates-posts';list.textContent='Loading game conversations…';host.append(toolbar,list);
   try {
-    const [pages,catalog]=await Promise.all([Promise.all(slugs.map((slug)=>api(`/posts?game=${encodeURIComponent(slug)}&limit=10`).catch(()=>({items:[]})))),api('/games?limit=50').catch(()=>({items:[]}))]);
+    const [pages,catalog]=await Promise.all([Promise.all(slugs.map((slug)=>api(`/posts?game=${encodeURIComponent(slug)}&limit=10`).catch(()=>({items:[]})))),api('/games?limit=100').catch(()=>({items:[]}))]);
     const gameNames=new Map(catalog.items.map((game)=>[game.slug,game.name]));for(const slug of slugs){const option=document.createElement('option');option.value=slug;option.textContent=gameNames.get(slug)||slug;filter.append(option);}toolbar.append(filter);
     const postsByGame=new Map();for(let index=0;index<slugs.length;index++)for(const post of pages[index].items||[]){if(![...postsByGame.values()].some((items)=>items.some((entry)=>entry._id===post._id))){const selected=post.destinations?.find((destination)=>destination.type==='game'&&slugs.includes(destination.target))?.target||slugs[index];if(!postsByGame.has(selected))postsByGame.set(selected,[]);postsByGame.get(selected).push(post);}}
     const renderGroups=()=>{list.replaceChildren();const chosen=filter.value;const groups=chosen==='all'?slugs.filter((slug)=>postsByGame.has(slug)):[chosen].filter((slug)=>postsByGame.has(slug));if(!groups.length){const note=document.createElement('p');note.className='catalog-message';note.textContent='No player conversations yet for this game.';list.append(note);return;}for(const slug of groups){const section=document.createElement('section');section.className='updates-game-group';const title=document.createElement('h2');title.textContent=gameNames.get(slug)||slug;section.append(title);for(const post of postsByGame.get(slug))section.append(renderPost(post));list.append(section);}};
@@ -1414,30 +1367,6 @@ const onboarding = createOnboarding({
 function startOnboarding() {
   onboarding.start();
 }
-
-notifications = createNotifications({
-  api,
-  getUser: () => currentUser,
-  button: $('#notifications-button'),
-  onNeedSignIn: () => openAuth(),
-  onOpenPost: async (postId) => {
-    try { const detail = await api(`/posts/${postId}`); openComments(detail.post, null); }
-    catch { toast('That post is no longer available.'); }
-  },
-  onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
-  onOpenFriends: () => selectView('friends'),
-});
-if (currentUser) notifications.refresh();
-
-presence.configure({
-  api,
-  getUser: () => currentUser,
-  onOpenFriends: () => selectView('friends'),
-  onNeedSignIn: () => openAuth(),
-  setAvatar,
-});
-presence.mountPanel($('#online-panel'));
-presence.sync();
 
 /* Arcadia profile, edit-profile sheet and settings.
    PASTE THIS OVER the old renderProfile, loadProfilePosts, editProfile and renderSettings
@@ -2137,7 +2066,7 @@ else if (info.status === 'friends') {
 
 function fdAvatar(person) {
   const name = person.displayName || person.username;
-  const node = uiEl('span', 'fd-avatar', name[0].toUpperCase()); setAvatar(node, person.avatar, name[0].toUpperCase()); presence.mark(node, person.username);
+  const node = uiEl('span', 'fd-avatar', name[0].toUpperCase()); setAvatar(node, person.avatar, name[0].toUpperCase());
   node.setAttribute('aria-hidden', 'true');
   return node;
 }
@@ -2146,7 +2075,7 @@ function fdRow(person, fill) {
   const row = uiEl('div', 'fd-item');
   const main = uiEl('button', 'fd-main'); main.type = 'button';
   main.setAttribute('aria-label', `Open ${person.displayName || person.username}'s profile`);
-  main.append(uiEl('span', 'fd-name', person.displayName || person.username), presence.bindLabel(uiEl('span', 'fd-handle', `@${person.username}`), person.username, `@${person.username}`, `@${person.username} · `));
+  main.append(uiEl('span', 'fd-name', person.displayName || person.username), uiEl('span', 'fd-handle', `@${person.username}`));
   if (person.bio) main.append(uiEl('span', 'fd-bio', person.bio));
   main.addEventListener('click', () => { selectView('profile'); void renderProfile(person.username); });
   const actions = uiEl('div', 'fd-actions');
@@ -2293,7 +2222,7 @@ async function renderProfile(username = currentUser?.username, initialTab = 'pos
     const isSelf = currentUser?.username === user.username;
     const games = (user.favoriteGames || []).map(pfGameName);
 
-    const cover = uiEl('div', 'pf-cover'); applyBanner(cover, user, pfCover(user.username)); cover.setAttribute('aria-hidden', 'true');
+    const cover = uiEl('div', 'pf-cover'); cover.style.backgroundImage = `url(${pfCover(user.username)})`; cover.setAttribute('aria-hidden', 'true');
     const bannerGame = games[0];
 
 if (bannerGame) {
@@ -2310,7 +2239,7 @@ if (bannerGame) {
   }
 }
     const head = uiEl('div', 'pf-head');
-    const avatar = uiEl('div', 'pf-avatar', display[0].toUpperCase()); setAvatar(avatar, user.avatar || 'gradient-violet', display[0].toUpperCase()); presence.mark(avatar, user.username); avatar.setAttribute('aria-hidden', 'true');
+    const avatar = uiEl('div', 'pf-avatar', display[0].toUpperCase()); setAvatar(avatar, user.avatar || 'gradient-violet', display[0].toUpperCase()); avatar.setAttribute('aria-hidden', 'true');
     const ident = uiEl('div', 'pf-id'); ident.append(uiEl('h2', 'pf-name', display), uiEl('p', 'pf-handle', `@${user.username}`));
     const actions = uiEl('div', 'pf-actions');
     if (isSelf) {
@@ -2335,7 +2264,7 @@ if (bannerGame) {
 
     const tabs = uiEl('div', 'pf-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Profile sections');
     const panels = uiEl('div', 'pf-panels');
-    const defs = [['posts', 'Posts'], ['games', 'Games'], ['about', 'About']];
+    const defs = [['posts', 'Posts'], ['games', 'Games'], ['communities', 'Communities'], ['about', 'About']];
     const tabButtons = []; const panelNodes = {};
     const select = (key) => {
       for (const button of tabButtons) { const on = button.dataset.key === key; button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1; }
@@ -2430,6 +2359,7 @@ if (bannerGame) {
     }
 
     panelNodes.about.append(about);
+    void communitiesPage.renderProfileSection(panelNodes.communities, profileUsername, isSelf);
 
     card.append(cover, head, bio, chips, tabs, panels);
     select(initialTab);
@@ -2476,6 +2406,8 @@ function arcDetailPage({
   heroColor = '',
   titleFont = '',
   backLabel = 'Back',
+  actions = [],
+  extra = null,
   onBack
 }) {
   const page = uiEl('article', 'gd');
@@ -2513,6 +2445,13 @@ function arcDetailPage({
   if (kicker) body.append(uiEl('p', 'gd-kicker', kicker));
   if (description) body.append(uiEl('p', 'gd-desc', description));
 
+  // Optional buttons (for example "Add to my games") sit under the write-up.
+  if (actions.length) {
+    const row = uiEl('div', 'gd-actions');
+    row.append(...actions);
+    body.append(row);
+  }
+
   const shownFacts = facts.filter(([, value]) => value);
   if (shownFacts.length) {
     const list = uiEl('dl', 'gd-facts');
@@ -2522,6 +2461,13 @@ function arcDetailPage({
       list.append(item);
     }
     body.append(list);
+  }
+
+  // Optional extra section (for example the communities for a game).
+  if (extra) {
+    const wrap = uiEl('div', 'gd-extra');
+    wrap.append(extra);
+    body.append(wrap);
   }
 
   card.append(hero, body);
@@ -2677,57 +2623,7 @@ function openEditProfile(user) {
     } catch (e) { photoMessage(e.message || 'Could not remove the photo.', true); }
     finally { choosePhoto.disabled = removePhoto.disabled = false; }
   });
-
-  // Profile banner: upload, replace or remove. Saved straight away.
-  const bannerField = uiEl('div', 'field banner-edit');
-  let bannerValue = user.banner || null;
-  const bannerPreview = uiEl('div', 'banner-edit__preview'); bannerPreview.setAttribute('aria-hidden', 'true');
-  const paintBanner = () => applyBanner(bannerPreview, { ...user, banner: bannerValue }, pfCover(user.username));
-  paintBanner();
-  const bannerRow = uiEl('div', 'banner-edit__row');
-  const bannerFile = document.createElement('input'); bannerFile.type = 'file'; bannerFile.accept = 'image/jpeg,image/png,image/webp,image/gif'; bannerFile.hidden = true;
-  const chooseBanner = uiEl('button', 'button', isPhotoAvatar(bannerValue) ? 'Change banner' : 'Add banner'); chooseBanner.type = 'button';
-  const removeBanner = uiEl('button', 'button', 'Remove banner'); removeBanner.type = 'button'; removeBanner.hidden = !isPhotoAvatar(bannerValue);
-  const bannerStatus = uiEl('p', 'avatar-edit__status', 'Wide pictures work best. We crop to 1600 × 600. Without one, your first game’s banner is used.'); bannerStatus.setAttribute('role', 'status');
-  bannerRow.append(chooseBanner, removeBanner);
-  bannerField.append(uiEl('label', 'st-label', 'Profile banner'), bannerPreview, bannerRow, bannerStatus, bannerFile);
-  const bannerMessage = (text, isError = false) => { bannerStatus.textContent = text; bannerStatus.classList.toggle('is-error', isError); };
-  const setBannerState = (value) => {
-    bannerValue = value || null;
-    currentUser = { ...currentUser, banner: bannerValue };
-    paintBanner();
-    chooseBanner.textContent = isPhotoAvatar(bannerValue) ? 'Change banner' : 'Add banner';
-    removeBanner.hidden = !isPhotoAvatar(bannerValue);
-    photoChanged = true;
-  };
-  chooseBanner.addEventListener('click', () => bannerFile.click());
-  bannerFile.addEventListener('change', async () => {
-    const file = bannerFile.files?.[0];
-    bannerFile.value = '';
-    if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) { bannerMessage('Choose a JPEG, PNG, WebP or GIF image.', true); return; }
-    chooseBanner.disabled = removeBanner.disabled = true;
-    bannerMessage('Uploading…');
-    try {
-      const prepared = await prepareBannerFile(file);
-      const formData = new FormData(); formData.append('photo', prepared);
-      const result = await api('/auth/banner', { method: 'POST', body: formData });
-      setBannerState(result.user.banner);
-      bannerMessage('Banner updated.');
-    } catch (e) { bannerMessage(e.message || 'Could not upload that banner.', true); }
-    finally { chooseBanner.disabled = removeBanner.disabled = false; }
-  });
-  removeBanner.addEventListener('click', async () => {
-    chooseBanner.disabled = removeBanner.disabled = true;
-    bannerMessage('Removing…');
-    try {
-      await api('/auth/profile', { method: 'PATCH', body: JSON.stringify({ banner: null }) });
-      setBannerState(null);
-      bannerMessage('Banner removed.');
-    } catch (e) { bannerMessage(e.message || 'Could not remove the banner.', true); }
-    finally { chooseBanner.disabled = removeBanner.disabled = false; }
-  });
-  body.append(photoField, bannerField, nameField, bioField, gamesRow);
+  body.append(photoField, nameField, bioField, gamesRow);
 
   const foot = uiEl('div', 'sheet-foot');
   const cancel = uiEl('button', 'button', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
@@ -2806,15 +2702,14 @@ async function renderSettings(host) {
   const privacyCard = stCard('Privacy');
   privacyCard.append(
     stRow('Profile visibility', 'Who can see your profile and posts.', stSelect('profileVisibility', [['public', 'Public'], ['private', 'Private']], privacy.profileVisibility || 'public', 'Profile visibility')),
-    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests')),
-    stRow('Show when you’re active', 'Friends see a green dot and “Active now” when you’re online. Turn this off and you appear offline.', stSwitch('showOnlineStatus', privacy.showOnlineStatus !== false, 'Show when you’re active'))
+    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests'))
   );
   const saveBar = uiEl('div', 'st-save'); const savePrefs = uiEl('button', 'button button--primary', 'Save preferences'); savePrefs.type = 'submit'; saveBar.append(savePrefs);
   form.append(notifications, privacyCard, saveBar);
   form.addEventListener('submit', async (event) => {
     event.preventDefault(); const values = new FormData(form); savePrefs.disabled = true;
     try {
-      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests'), showOnlineStatus: values.has('showOnlineStatus') } }) });
+      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests') } }) });
       toast('Settings saved.');
     } catch (e) { toast(e.message); } finally { savePrefs.disabled = false; }
   });
@@ -2935,7 +2830,7 @@ function composePost() {
     addOption('general','Public feed');
     form.insertBefore(label,$('#composer-body'));form.insertBefore(select,$('#composer-body'));
     destinationChoicesLoaded=true;
-    Promise.allSettled([api('/games?limit=50'),api('/communities/mine')]).then(([games,mine])=>{
+    Promise.allSettled([api('/games?limit=100'),api('/communities/mine')]).then(([games,mine])=>{
       for(const item of (games.status==='fulfilled'?games.value.items:[]))addOption(`game:${item.slug}`,`Game · ${item.name}`);
       for(const item of (mine.status==='fulfilled'?mine.value.items:[]))addOption(`community:${item.slug}`,`Group · ${item.name}`);
     });

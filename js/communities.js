@@ -421,7 +421,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
 
   async function ensureCatalogue() {
     if (state.catalogue) return state.catalogue;
-    try { state.catalogue = (await api('/games?sort=popular&limit=50')).items || []; }
+    try { state.catalogue = (await api('/games?sort=popular&limit=100')).items || []; }
     catch { state.catalogue = []; }
     return state.catalogue;
   }

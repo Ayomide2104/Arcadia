@@ -71,7 +71,7 @@ export function createGames({ api, getUser, toast, openAuth, gameInfo, gameTheme
 
   async function ensureGames(force = false) {
     if (!force && state.games.length && Date.now() - state.loadedAt < 30000) return;
-    const data = await api('/games?sort=popular&limit=50');
+    const data = await api('/games?sort=popular&limit=100');
     state.games = data.items || [];
     state.loadedAt = Date.now();
   }

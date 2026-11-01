@@ -97,6 +97,24 @@ router.get('/mine', requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Posts from every community the signed-in user has joined (feed "Communities" tab).
+router.get('/feed', requireAuth, async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 20, 1), 30);
+    const memberships = await Membership.find({ user: req.user._id }).select('community').lean();
+    const communities = await Community.find({ _id: { $in: memberships.map((entry) => entry.community) }, active: true }).select('slug').lean();
+    const slugs = communities.map((community) => community.slug);
+    if (!slugs.length) return res.json({ success: true, data: { items: [], nextCursor: null } });
+    const query = { removedAt: null, destinations: { $elemMatch: { type: 'community', target: { $in: slugs } } } };
+    if (req.query.cursor) {
+      if (!mongoose.Types.ObjectId.isValid(req.query.cursor)) return res.status(400).json({ success: false, error: 'Invalid pagination cursor.' });
+      query._id = { $lt: req.query.cursor };
+    }
+    const items = await Post.find(query).sort({ _id: -1 }).limit(limit).populate('author', 'username displayName avatar').lean();
+    res.json({ success: true, data: { items, nextCursor: items.length === limit ? String(items.at(-1)._id) : null } });
+  } catch (error) { next(error); }
+});
+
 // Communities that match the games and genres the signed-in user picked.
 router.get('/suggested', requireAuth, async (req, res, next) => {
   try {
@@ -210,9 +228,9 @@ router.post('/:slug/join', requireAuth, async (req, res, next) => {
   try {
     const community = await Community.findOne({ slug: req.params.slug, active: true, visibility: 'public' });
     if (!community) return res.status(404).json({ success: false, error: 'Community not found.' });
-    // Official communities have no owner; the first member must not claim one.
-    const claimedOwner = community.memberCount === 0 && !community.official ? await Community.findOneAndUpdate({ _id: community._id, memberCount: 0, ownerUser: null }, { $set: { ownerUser: req.user._id } }, { new: true }).select('_id').lean() : null;
-    const role = claimedOwner ? 'owner' : 'member';
+    // Joining never grants ownership. Ownerless communities (official ones and
+    // the seeded lounges) are run by Arcadia; use scripts/setCommunityRole.js to appoint staff.
+    const role = 'member';
     let result;
     try { result = await Membership.updateOne({ community: community._id, user: req.user._id }, { $setOnInsert: { community: community._id, user: req.user._id, role } }, { upsert: true }); }
     catch (error) { if (error.code !== 11000) throw error; result = { upsertedCount: 0 }; }
