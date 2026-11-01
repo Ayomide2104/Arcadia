@@ -15,3 +15,6 @@
 .feed-hidden__undo{padding:8px 14px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:transparent;color:#fff;font:inherit;font-size:13px;cursor:pointer}
 .feed-divider{display:grid;gap:4px;margin:18px 0;padding:16px 18px;border:1px dashed rgba(255,255,255,.2);border-radius:16px;color:#b9bed3;text-align:center;font-size:13px}
 .feed-divider strong{color:#fff;font-size:15px}
+.repost-label{margin:0 0 10px;padding:0;color:#7d849c;font-size:12px;font-weight:600;letter-spacing:.01em}
+.pf-more{display:block;margin:14px auto}
+.st-muted{display:grid;gap:4px;margin-top:8px}

@@ -23,6 +23,7 @@
     <link rel="stylesheet" href="/css/catalog.css" />
     <link rel="stylesheet" href="/css/updates.css" />
     <link rel="stylesheet" href="/css/feed-extras.css" />
+    <link rel="stylesheet" href="/css/notifications.css" />
     <link rel="stylesheet" href="/css/accents.css" />
     <link rel="stylesheet" href="/css/lobby.css" />
     <link rel="stylesheet" href="/css/theme.css" />
@@ -44,7 +45,8 @@
       <a class="brand" href="#feed" aria-label="Arcadia home"><img class="brand__mark" src="/assets/arcadia/brand/logo-mark.svg" alt=""/><span class="brand__name">Arcadia</span></a>
       <button class="icon-button mobile-search-toggle" id="mobile-search-toggle" type="button" aria-label="Open search" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg></button><label class="topbar-search"><span class="sr-only">Search players, games and communities</span><input id="global-search" type="search" placeholder="Search players, games and communities" /></label>
       <div class="topbar__right">
-        <button class="icon-button" type="button" data-view-link="updates" aria-label="Notifications" title="Notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
+        <button class="icon-button" type="button" data-view-link="updates" aria-label="Game updates" title="Game updates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v13a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5"/></svg></button>
+        <button class="icon-button" type="button" id="notifications-button" aria-label="Notifications" title="Notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
         <button class="avatar avatar--self" id="auth-avatar" type="button" aria-label="Sign in to your profile">?</button>
         <button class="sr-only" id="auth-open" type="button" aria-label="Sign in">Sign in</button>
         <button

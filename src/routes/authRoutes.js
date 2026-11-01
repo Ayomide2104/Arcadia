@@ -182,6 +182,47 @@ router.get('/profiles/:username/posts', optionalAuth, async (req,res,next)=>{
   }catch(error){next(error);}
 });
 
+// GET /api/auth/profiles/:username/reposts
+// Public posts this player has reposted, newest repost first.
+router.get('/profiles/:username/reposts', optionalAuth, async (req, res, next) => {
+  try {
+    if (typeof req.params.username !== 'string' || !/^[a-z0-9_]{3,24}$/i.test(req.params.username)) return res.status(400).json({ success: false, error: 'Invalid profile.' });
+    const user = await User.findOne({ username: req.params.username.toLowerCase() }).select('_id privacy').lean();
+    if (!user) return res.status(404).json({ success: false, error: 'Profile not found.' });
+    if (user.privacy?.profileVisibility === 'private' && req.user?._id?.toString() !== user._id.toString()) return res.status(404).json({ success: false, error: 'Profile not found.' });
+
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 10, 1), 20);
+    const query = { user: user._id };
+    if (req.query.cursor) {
+      if (!mongoose.Types.ObjectId.isValid(req.query.cursor)) return res.status(400).json({ success: false, error: 'Invalid pagination cursor.' });
+      query._id = { $lt: req.query.cursor };
+    }
+
+    const Repost = require('../models/Repost');
+    const Reaction = require('../models/Reaction');
+    const Post = require('../models/Post');
+    const rows = await Repost.find(query).sort({ _id: -1 }).limit(limit).lean();
+    const posts = rows.length
+      ? await Post.find({ _id: { $in: rows.map((row) => row.post) }, removedAt: null, destinations: { $elemMatch: { type: { $in: ['general', 'game'] } } } })
+          .populate('author', 'username displayName avatar').lean()
+      : [];
+    const byId = new Map(posts.map((post) => [String(post._id), post]));
+    const items = rows.map((row) => { const post = byId.get(String(row.post)); return post ? { ...post, repostedAt: row.createdAt } : null; }).filter(Boolean);
+
+    if (req.user && items.length) {
+      const ids = items.map((item) => item._id);
+      const [liked, reposted] = await Promise.all([
+        Reaction.find({ user: req.user._id, post: { $in: ids } }).distinct('post'),
+        Repost.find({ user: req.user._id, post: { $in: ids } }).distinct('post')
+      ]);
+      const likedSet = new Set(liked.map(String)); const repostedSet = new Set(reposted.map(String));
+      for (const item of items) { item.liked = likedSet.has(String(item._id)); item.reposted = repostedSet.has(String(item._id)); }
+    }
+
+    res.json({ success: true, data: { items, nextCursor: rows.length === limit ? String(rows.at(-1)._id) : null } });
+  } catch (error) { next(error); }
+});
+
 module.exports = router;
 
 // POST /api/auth/avatar

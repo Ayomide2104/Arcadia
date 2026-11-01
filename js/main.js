@@ -5,6 +5,9 @@ import { createGames } from './games.js';
 import { createCommunities } from './communities.js';
 import { createSeenTracker } from './seen.js';
 import { createFeedExtras } from './feedExtras.js';
+import { createNotifications } from './notifications.js';
+
+let notifications = null;
 
 // Records which posts a player has actually looked at, so the feed never repeats them.
 const seenTracker = createSeenTracker({ api: (path, options) => api(path, options), isSignedIn: () => Boolean(currentUser) });
@@ -440,6 +443,7 @@ function updateSignedInUI() {
   $('#auth-avatar').setAttribute('aria-label', currentUser ? `Signed in as ${currentUser.username}` : 'Sign in to your profile');
   if ($('#comments-form')) { $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser); }
   setAvatar($('.avatar--composer'), currentUser?.avatar, currentUser?.username?.[0]?.toUpperCase() || '?');
+  if (currentUser) notifications?.refresh(); else notifications?.reset();
   $$('[data-action="signin"]').forEach((button) => {
     if (!button.dataset.originalLabel) button.dataset.originalLabel = button.textContent;
     if (currentUser) {
@@ -1378,6 +1382,20 @@ const onboarding = createOnboarding({
   onFinish: () => { updateSignedInUI(); selectView('feed'); toast('You’re all set.'); },
 });
 
+notifications = createNotifications({
+  api: (path, options) => api(path, options),
+  getUser: () => currentUser,
+  button: $('#notifications-button'),
+  onNeedSignIn: () => openAuth(),
+  onOpenPost: async (postId) => {
+    try { const detail = await api(`/posts/${postId}`); openComments(detail.post, null); }
+    catch { toast('That post is no longer available.'); }
+  },
+  onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
+  onOpenFriends: () => selectView('friends'),
+});
+if (currentUser) notifications.refresh();
+
 function startOnboarding() {
   onboarding.start();
 }
@@ -2278,11 +2296,13 @@ if (bannerGame) {
 
     const tabs = uiEl('div', 'pf-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Profile sections');
     const panels = uiEl('div', 'pf-panels');
-    const defs = [['posts', 'Posts'], ['games', 'Games'], ['communities', 'Communities'], ['about', 'About']];
+    const defs = [['posts', 'Posts'], ['reposts', 'Reposts'], ['communities', 'Communities'], ['about', 'About']];
+    let repostsLoaded = false;
     const tabButtons = []; const panelNodes = {};
     const select = (key) => {
       for (const button of tabButtons) { const on = button.dataset.key === key; button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1; }
       for (const [name, panel] of Object.entries(panelNodes)) panel.hidden = name !== key;
+      if (key === 'reposts' && !repostsLoaded) { repostsLoaded = true; void loadProfileReposts(user.username, repostList, display, isSelf); }
     };
     defs.forEach(([key, label]) => {
       const tab = uiEl('button', 'pf-tab', label); tab.type = 'button'; tab.id = `pf-tab-${key}`; tab.dataset.key = key;
@@ -2299,15 +2319,7 @@ if (bannerGame) {
     });
 
     const list = uiEl('div', 'post-list pf-posts'); panelNodes.posts.append(list);
-    if (games.length) {
-      const grid = uiEl('div', 'pf-games');
-      for (const name of games) { const item = uiEl('div', 'pf-game'); item.append(pfTile(name), uiEl('span', '', name)); grid.append(item); }
-      panelNodes.games.append(grid);
-    } else {
-      panelNodes.games.append(isSelf
-        ? pfEmpty('empty-games', 'No games picked yet', 'Choose the games you play and Arcadia will tune your feed to them.', 'Choose games', (event) => startOnboarding(event))
-        : pfEmpty('empty-games', 'No games yet', `${display} hasn't picked favorite games yet.`));
-    }
+    const repostList = uiEl('div', 'post-list pf-posts'); panelNodes.reposts.append(repostList);
     
     const about = uiEl('div', 'pf-ab');
 
@@ -2562,6 +2574,33 @@ function openGameDetails(info, games = [], username = currentUser?.username) {
   window.scrollTo({ top: 0 });
 }
 
+// The Reposts tab: public posts this player reposted, newest repost first.
+async function loadProfileReposts(username, host, display, isSelf, cursor = null) {
+  host.querySelector('.pf-more')?.remove();
+  try {
+    const data = await api(`/auth/profiles/${encodeURIComponent(username)}/reposts?limit=10${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+    if (!cursor && !data.items.length && !data.nextCursor) {
+      host.append(pfEmpty('empty-posts', 'No reposts yet', isSelf ? 'Tap the repost button on a post you like and it will show up here.' : `${display} hasn’t reposted anything yet.`));
+      return;
+    }
+    for (const item of data.items) {
+      const node = renderPost(item);
+      const label = uiEl('p', 'repost-label', `↻ ${isSelf ? 'You' : display} reposted`);
+      const when = new Date(item.repostedAt);
+      if (!Number.isNaN(when.getTime())) label.append(` · ${when.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`);
+      node.prepend(label);
+      host.append(node);
+    }
+    if (data.nextCursor) {
+      const more = uiEl('button', 'button pf-more', 'Show more'); more.type = 'button';
+      more.addEventListener('click', () => { more.disabled = true; void loadProfileReposts(username, host, display, isSelf, data.nextCursor); });
+      host.append(more);
+    }
+  } catch (error) {
+    host.append(pfEmpty('empty-posts', 'Reposts unavailable', error.message || 'Could not load reposts.'));
+  }
+}
+
 async function loadProfilePosts(username,host,cursor=null){try{const data=await api(`/auth/profiles/${encodeURIComponent(username)}/posts?limit=10${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`);host.append(...data.items.map(renderPost));if(!data.items.length&&!cursor){const note=document.createElement('p');note.className='catalog-message';note.textContent='No public posts yet.';host.append(note);}if(data.nextCursor){let more=$('.profile-load-more',host);if(!more){more=document.createElement('button');more.className='button profile-load-more';more.type='button';more.textContent='Load more posts';host.append(more);}more.onclick=()=>{more.disabled=true;more.remove();void loadProfilePosts(username,host,data.nextCursor);};}}catch(error){const note=document.createElement('p');note.textContent=error.message;host.append(note);}}
 
 function openEditProfile(user) {
@@ -2703,6 +2742,28 @@ async function renderSettings(host) {
   const interests = uiEl('button', 'button', 'Update'); interests.type = 'button'; interests.addEventListener('click', startOnboarding);
   appearance.append(stRow('Theme', 'Choose the look that feels right on your screen.', seg), stRow('Gaming interests', 'Pick the games and genres that shape your feed.', interests));
   page.append(appearance);
+
+  const muted = stCard('Muted players');
+  const mutedList = uiEl('div', 'st-muted');
+  muted.append(uiEl('p', 'st-desc', 'Posts from muted players stay out of your feed. Mute someone from the ⋯ menu on any post.'), mutedList);
+  page.append(muted);
+  void (async () => {
+    try {
+      const data = await api('/posts/hidden/authors');
+      if (!data.items.length) { mutedList.append(uiEl('p', 'st-desc', 'You haven’t muted anyone.')); return; }
+      for (const person of data.items) {
+        const row = uiEl('div', 'st-row');
+        row.append(uiEl('div', 'st-label', `${person.displayName || person.username} (@${person.username})`));
+        const unmute = uiEl('button', 'button', 'Unmute'); unmute.type = 'button';
+        unmute.addEventListener('click', async () => {
+          unmute.disabled = true;
+          try { await api(`/posts/hidden/author/${person._id}`, { method: 'DELETE' }); row.remove(); toast(`Unmuted @${person.username}.`); }
+          catch (error) { toast(error.message); unmute.disabled = false; }
+        });
+        row.append(unmute); mutedList.append(row);
+      }
+    } catch { mutedList.append(uiEl('p', 'st-desc', 'Could not load your muted players.')); }
+  })();
 
   const loaded = await api('/auth/settings').catch(() => ({ settings: { notificationPreferences: {}, privacy: {} } }));
   const prefs = loaded.settings?.notificationPreferences || {}; const privacy = loaded.settings?.privacy || {};
