@@ -12,6 +12,8 @@ import { presence } from './presence.js';
 import { createTrendingGames } from './trendingGames.js';
 import { createShare, postLink } from './share.js';
 import { createNotifications } from './notifications.js';
+import { createSearch } from './search.js';
+import { createThread } from './commentThread.js';
 
 let notifications = null;
 
@@ -28,7 +30,7 @@ const composer = createComposer({
 const circle = createCircleStrip({
   api: (path, options) => api(path, options),
   setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
-  onOpen: (post, trigger) => openComments(post, trigger),
+  onOpen: (post, trigger) => openPost(post, trigger),
 });
 const feedExtras = createFeedExtras({ api: (path, options) => api(path, options), toast: (message) => toast(message), getUser: () => currentUser });
 presence.configure({
@@ -296,7 +298,7 @@ authForm.addEventListener('submit', async (event) => {
         try { await api(`/posts/${pending.id}/${pending.type}`, { method: 'POST' }); toast(pending.type === 'like' ? 'Post liked.' : 'Post reposted.'); await loadFeed(); }
         catch (error) { toast(error.message); }
       } else if (pending.type === 'comment') {
-        try { const detail = await api(`/posts/${pending.id}`); openComments(detail.post, null); }
+        try { const detail = await api(`/posts/${pending.id}`); openPost(detail.post, null); }
         catch (error) { toast(error.message); }
       }
       else if (pending.type === 'game-interest') {
@@ -608,10 +610,10 @@ function renderFeedItem(post) {
   return node;
 }
 
-function renderPost(post) {
+function renderPost(post, { embedded = false } = {}) {
   const article = document.createElement('article');
-  article.className = 'post-card glass-panel pc';
-  article.id = `post-${post._id}`;
+  article.className = embedded ? 'post-card pc pc--embedded' : 'post-card glass-panel pc';
+  if (!embedded) article.id = `post-${post._id}`;
   article.dataset.postId = post._id;
 
   // Post header: avatar, name · handle · time, and one quiet line for where it was shared.
@@ -881,7 +883,14 @@ function renderPost(post) {
   };
 
   const showComments = () => {
-    openComments(post, document.activeElement);
+    if (embedded) {
+      // Already looking at this post: jump to the comment box instead.
+      const input = $('#comments-input');
+      if (input && !$('#comments-form').hidden) input.focus();
+      else $('#comments-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    openPost(post, document.activeElement);
   };
 
   commentButton.addEventListener('click', showComments);
@@ -1101,23 +1110,24 @@ function commentTime(item) {
 }
 
 
-function discussionComment(item, onReply) {
-  const row = document.createElement('article'); row.className = 'discussion-comment'; row.dataset.commentId = String(item._id || '');
-  if (item.parent) row.classList.add('is-reply');
-  const avatar = document.createElement('span'); avatar.className = 'discussion-avatar';
-  avatar.textContent = (item.author?.displayName || item.author?.username || '?')[0].toUpperCase();
-  setAvatar(avatar, item.author?.avatar, avatar.textContent);
-  const content = document.createElement('div'); content.className = 'discussion-main';
-  const meta = document.createElement('div'); meta.className = 'discussion-meta';
-  const author = document.createElement('strong'); author.textContent = item.author?.displayName || item.author?.username || 'Player';
-  meta.append(author, commentTime(item));
-  const body = document.createElement('p'); body.className = 'discussion-text'; body.textContent = item.body;
-  content.append(meta, body);
-  if (!item.parent && currentUser && onReply) {
-    const reply = document.createElement('button'); reply.className = 'text-button'; reply.type = 'button'; reply.textContent = 'Reply'; reply.addEventListener('click', () => onReply(item, row)); content.append(reply);
-  }
-  row.append(avatar, content);
-  return row;
+function discussionAvatar(author) {
+  const avatar = document.createElement('span');
+  avatar.className = 'discussion-avatar';
+  avatar.textContent = (author?.displayName || author?.username || '?')[0].toUpperCase();
+  setAvatar(avatar, author?.avatar, avatar.textContent);
+  return avatar;
+}
+
+let activeThread = null;
+let activeEmbeddedPost = null;
+
+// One more comment on the open post: keep every visible counter in step.
+function bumpCommentCount() {
+  if (!activeCommentsPost) return;
+  activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1;
+  const count = activeCommentsPost.commentCount;
+  document.querySelector(`#post-${activeCommentsPost._id}`)?._updateComments?.(count);
+  activeEmbeddedPost?._updateComments?.(count);
 }
 
 function setCommentSkeletons() {
@@ -1131,22 +1141,22 @@ function setCommentsError(error, retry) {
 }
 
 function renderDiscussion(items) {
-  const list = $('#comments-list'); list.replaceChildren();
-  if (!items.length) {
-    const empty = document.createElement('div'); empty.className = 'comments-empty';
-    const image = document.createElement('img'); image.src = '/assets/arcadia/empty-states/empty-posts.svg'; image.alt = '';
-    const copy = document.createElement('p'); copy.textContent = 'No comments yet. Start the conversation.'; empty.append(image, copy); list.append(empty); return;
-  }
-  const roots = new Map(); const replies = new Map();
-  for (const item of items) {
-    if (item.parent) { const parentId = String(item.parent?._id || item.parent); const bucket = replies.get(parentId) || []; bucket.push(item); replies.set(parentId, bucket); }
-    else roots.set(String(item._id), item);
-  }
-  for (const item of roots.values()) {
-    const root = discussionComment(item, (parent, anchor) => openReplyComposer(parent, anchor)); list.append(root);
-    const children = replies.get(String(item._id)) || [];
-    if (children.length) { const group = document.createElement('div'); group.className = 'discussion-replies'; for (const child of children) group.append(discussionComment(child)); list.append(group); }
-  }
+  const list = $('#comments-list');
+  activeThread = createThread({
+    host: list,
+    comments: items,
+    canReply: () => Boolean(currentUser),
+    onNeedSignIn: () => openAuth({ type: 'comment', id: activeCommentsPost?._id }),
+    avatar: discussionAvatar,
+    name: (author) => author?.displayName || author?.username || 'Player',
+    time: (date) => commentTime({ createdAt: date }),
+    submit: async (parent, body) => {
+      if (!activeCommentsPost) throw new Error('This post is no longer open.');
+      const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body, parent: parent._id }) });
+      bumpCommentCount();
+      return { ...result.comment, author: result.comment.author?.username ? result.comment.author : currentUser };
+    },
+  });
 }
 
 async function loadDiscussion(post, generation = commentsLoadGeneration) {
@@ -1161,6 +1171,20 @@ async function loadDiscussion(post, generation = commentsLoadGeneration) {
   }
 }
 
+// One way to open any post: community posts get their own page, everything else opens the post sheet.
+function openPost(post, trigger = document.activeElement, options = {}) {
+  if (!post?._id) return;
+  if (isCommunityPost(post)) {
+    const target = (post.destinations || []).find((destination) => destination.type === 'community' && destination.target);
+    if (commentsDialog.open) closeCommentsNow({ clearHash: false });
+    if (/^#post\//i.test(location.hash)) history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+    selectView('groups');
+    communitiesPage.openPostPage(target.target, String(post._id));
+    return;
+  }
+  openComments(post, trigger, options);
+}
+
 function openComments(post, trigger = document.activeElement, options = {}) {
   if (!post?._id) return;
   const id = String(post._id);
@@ -1168,10 +1192,10 @@ function openComments(post, trigger = document.activeElement, options = {}) {
   activeCommentsPost = post; commentsReturnFocus = trigger instanceof HTMLElement ? trigger : null; commentsLoadGeneration++;
   const author = post.author?.displayName || post.author?.username || 'Player';
   $('.comments-title-desktop').textContent = `${author}’s post`;
+  // Show the whole post (text, photos, game/community chips, actions), not just a snippet.
   const postHost = $('#comments-post'); postHost.replaceChildren();
-  const authorLine = document.createElement('strong'); authorLine.textContent = author;
-  const text = document.createElement('p'); text.textContent = post.body || '';
-  postHost.append(authorLine, text);
+  activeEmbeddedPost = renderPost(post, { embedded: true });
+  postHost.append(activeEmbeddedPost);
   $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser);
   $('#comments-error').hidden = true;
   if (options.updateHash !== false && location.hash !== `#post/${id}`) {
@@ -1185,7 +1209,7 @@ function openComments(post, trigger = document.activeElement, options = {}) {
 
 function closeCommentsNow({ clearHash = true } = {}) {
   if (!commentsDialog.open) return;
-  commentsDialog.close(); document.body.classList.remove('comments-open'); activeCommentsPost = null; commentsLoadGeneration++;
+  commentsDialog.close(); document.body.classList.remove('comments-open'); activeCommentsPost = null; activeThread = null; activeEmbeddedPost = null; commentsLoadGeneration++;
   if (clearHash && /^#post\/[a-f\d]{24}$/i.test(location.hash)) history.replaceState(history.state, '', `${location.pathname}${location.search}`);
   const target = commentsReturnFocus; commentsReturnFocus = null;
   if (target?.isConnected) window.setTimeout(() => target.focus(), 0);
@@ -1200,22 +1224,8 @@ async function syncCommentsRoute() {
   const match = location.hash.match(/^#post\/([a-f\d]{24})$/i);
   if (!match) { if (commentsDialog.open) closeCommentsNow({ clearHash: false }); return; }
   if (commentsDialog.open && String(activeCommentsPost?._id) === match[1]) return;
-  try { const result = await api(`/posts/${match[1]}`); openComments(result.post, null, { updateHash: false }); }
+  try { const result = await api(`/posts/${match[1]}`); openPost(result.post, null, { updateHash: false }); }
   catch { history.replaceState(history.state, '', `${location.pathname}${location.search}`); toast('That post is unavailable.'); }
-}
-
-async function openReplyComposer(parent, anchor) {
-  if ($('.comment-reply-form', $('#comments-list'))) return;
-  const form = document.createElement('form'); form.className = 'comment-reply-form';
-  const input = document.createElement('input'); input.required = true; input.maxLength = 1000; input.placeholder = 'Write a reply'; input.setAttribute('aria-label', 'Write a reply');
-  const send = document.createElement('button'); send.type = 'submit'; send.className = 'button button--primary'; send.textContent = 'Reply'; form.append(input, send); anchor.after(form); input.focus();
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault(); if (!activeCommentsPost) return; send.disabled = true;
-    const temp = { _id: `pending-${Date.now()}`, parent: parent._id, body: input.value, createdAt: new Date().toISOString(), author: currentUser };
-    const row = discussionComment(temp); row.classList.add('is-pending'); form.after(row);
-    try { const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body: input.value, parent: parent._id }) }); row.replaceWith(discussionComment(result.comment)); activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1; document.querySelector(`#post-${activeCommentsPost._id}`)?._updateComments?.(activeCommentsPost.commentCount); form.remove(); }
-    catch (error) { row.remove(); send.disabled = false; setCommentsError(error, () => form.requestSubmit()); }
-  });
 }
 
 $('#comments-close').addEventListener('click', requestCommentsClose);
@@ -1227,10 +1237,15 @@ $('#comments-form').addEventListener('submit', async (event) => {
   event.preventDefault(); if (!activeCommentsPost) return;
   const commentsForm = event.currentTarget;
   const input = $('#comments-input'); const send = $('button[type="submit"]', commentsForm); const body = input.value.trim(); if (!body) return;
-  send.disabled = true; const temp = { _id: `pending-${Date.now()}`, body, createdAt: new Date().toISOString(), author: currentUser };
-  const pending = discussionComment(temp, (parent, anchor) => openReplyComposer(parent, anchor)); pending.classList.add('is-pending'); $('#comments-list').append(pending); $('#comments-list').scrollTop = $('#comments-list').scrollHeight;
-  try { const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }); pending.replaceWith(discussionComment(result.comment, (parent, anchor) => openReplyComposer(parent, anchor))); activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1; document.querySelector(`#post-${activeCommentsPost._id}`)?._updateComments?.(activeCommentsPost.commentCount); input.value = ''; $('#comments-error').hidden = true; }
-  catch (error) { pending.remove(); setCommentsError(error, () => commentsForm.requestSubmit()); }
+  send.disabled = true;
+  try {
+    const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+    bumpCommentCount();
+    const saved = { ...result.comment, author: result.comment.author?.username ? result.comment.author : currentUser };
+    if (activeThread) { activeThread.addRoot(saved); $('#comments-scroll').scrollTop = $('#comments-scroll').scrollHeight; }
+    input.value = ''; $('#comments-error').hidden = true;
+  }
+  catch (error) { setCommentsError(error, () => commentsForm.requestSubmit()); }
   finally { send.disabled = false; }
 });
 const commentsHandle = $('.comments-drag-handle');
@@ -1283,6 +1298,21 @@ const trendingGames = createTrendingGames({
 });
 trendingGames.refresh();
 
+// Top-bar search: players, games and communities.
+createSearch({
+  api,
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  gameInfo: getArcadiaGame,
+  onPlayer: (username) => { selectView('profile'); void renderProfile(username); },
+  onGame: (slug) => { selectView('games'); gamesPage.openGame(slug); },
+  onCommunity: (slug) => communitiesPage.open(slug),
+  onClose: () => {
+    $('.topbar').classList.remove('search-open');
+    searchToggle.setAttribute('aria-expanded', 'false');
+    searchToggle.setAttribute('aria-label', 'Open search');
+  },
+});
+
 function loadGames() { void gamesPage.show(); }
 function loadCommunities() { void communitiesPage.show(); }
 function openCommunity(slug) { communitiesPage.open(slug); }
@@ -1324,7 +1354,7 @@ notifications = createNotifications({
   button: $('#notifications-button'),
   onNeedSignIn: () => openAuth(),
   onOpenPost: async (postId) => {
-    try { const detail = await api(`/posts/${postId}`); openComments(detail.post, null); }
+    try { const detail = await api(`/posts/${postId}`); openPost(detail.post, null); }
     catch { toast('That post is no longer available.'); }
   },
   onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
@@ -1338,6 +1368,8 @@ function startOnboarding() {
 
 /* Arcadia profile, edit-profile sheet and settings.
    Profile page, edit sheet and settings. */
+
+const BACK_ICON = '<svg class="back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>';
 
 function uiEl(tag, className, text) {
   const node = document.createElement(tag);
@@ -2383,7 +2415,7 @@ function arcDetailPage({
 
   const back = uiEl('button', 'gd-back');
   back.type = 'button';
-  back.append(uiEl('span', '', '‹'), uiEl('span', '', backLabel));
+  back.innerHTML = BACK_ICON; back.append(uiEl('span', '', backLabel));
   back.addEventListener('click', () => { if (typeof onBack === 'function') onBack(); });
 
   const card = uiEl('div', 'gd-card');
@@ -2448,7 +2480,8 @@ async function openGameLibrary(games = [], username = currentUser?.username) {
   const page = uiEl('section', 'gc');
 
   const top = uiEl('div', 'gc-top');
-  const back = uiEl('button', 'gc-back', '‹');
+  const back = uiEl('button', 'gc-back');
+  back.innerHTML = BACK_ICON;
   back.type = 'button';
   back.setAttribute('aria-label', 'Back to profile');
   back.title = 'Back to profile';
@@ -2716,7 +2749,7 @@ async function renderSettings(host) {
   const page = uiEl('div', 'pf-page st-page'); host.append(page);
   const top = uiEl('div', 'st-top');
   const back = uiEl('button', 'st-back'); back.type = 'button';
-  back.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>'; back.append('Profile');
+  back.innerHTML = BACK_ICON; back.append('Profile');
   back.addEventListener('click', () => renderProfile());
   top.append(back, uiEl('h1', 'st-heading', 'Settings')); page.append(top);
 

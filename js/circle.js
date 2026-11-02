@@ -52,9 +52,79 @@ export function createCircleStrip({ api, setAvatar, onOpen, onProfile }) {
   section.append(head, track);
   anchor.before(section);
 
-  const scrollBy = (dir) => track.scrollBy({ left: dir * Math.max(240, track.clientWidth * 0.8), behavior: 'smooth' });
+  /* Moving carousel: the row drifts left on its own, pauses on hover/touch/focus,
+     loops forever, and the arrows (or swiping) still work. */
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  let paused = false;
+  let resumeTimer = null;
+  let raf = 0;
+  let lastTime = 0;
+  let offset = 0; // fractional scroll position
+  const SPEED = 28; // pixels per second
+
+  const loopWidth = () => (track.scrollWidth - (Number.parseFloat(getComputedStyle(track).columnGap || getComputedStyle(track).gap) || 0)) / 2;
+
+  function tick(time) {
+    raf = requestAnimationFrame(tick);
+    const dt = Math.min(64, time - (lastTime || time));
+    lastTime = time;
+    if (paused || section.hidden || document.hidden || !track.dataset.looping) return;
+    const half = loopWidth();
+    if (half <= track.clientWidth) return; // nothing to scroll
+    // If the person scrolled by hand, continue from there.
+    if (Math.abs(track.scrollLeft - offset) > 2) offset = track.scrollLeft;
+    offset += (SPEED * dt) / 1000;
+    if (offset >= half) offset -= half;
+    track.scrollLeft = offset;
+  }
+
+  function pause() { paused = true; window.clearTimeout(resumeTimer); }
+  function resume(delay = 1800) {
+    window.clearTimeout(resumeTimer);
+    resumeTimer = window.setTimeout(() => { offset = track.scrollLeft; paused = false; }, delay);
+  }
+
+  function startMotion() {
+    cancelAnimationFrame(raf);
+    lastTime = 0;
+    offset = track.scrollLeft;
+    if (reduceMotion?.matches) return;
+    raf = requestAnimationFrame(tick);
+  }
+
+  track.addEventListener('pointerenter', (event) => { if (event.pointerType === 'mouse') pause(); });
+  track.addEventListener('pointerleave', (event) => { if (event.pointerType === 'mouse') resume(300); });
+  track.addEventListener('pointerdown', pause);
+  track.addEventListener('pointerup', () => resume());
+  track.addEventListener('pointercancel', () => resume());
+  track.addEventListener('touchstart', pause, { passive: true });
+  track.addEventListener('touchend', () => resume(), { passive: true });
+  track.addEventListener('focusin', pause);
+  track.addEventListener('focusout', () => resume(600));
+  track.addEventListener('wheel', () => { pause(); resume(); }, { passive: true });
+
+  const scrollBy = (dir) => {
+    pause();
+    const step = Math.max(240, track.clientWidth * 0.8);
+    const half = loopWidth();
+    let target = track.scrollLeft + dir * step;
+    if (track.dataset.looping && half > 0) {
+      if (target < 0) { track.scrollLeft += half; target += half; }
+      else if (target > half + step) { track.scrollLeft -= half; target -= half; }
+    }
+    track.scrollTo({ left: target, behavior: 'smooth' });
+    resume(2600);
+  };
   left.addEventListener('click', () => scrollBy(-1));
   right.addEventListener('click', () => scrollBy(1));
+  // Wrap seamlessly when the person drags past either end of the loop.
+  track.addEventListener('scroll', () => {
+    if (!track.dataset.looping) return;
+    const half = loopWidth();
+    if (half <= 0) return;
+    if (track.scrollLeft >= half) { track.scrollLeft -= half; offset = track.scrollLeft; }
+  }, { passive: true });
+  document.addEventListener('visibilitychange', () => { lastTime = 0; });
 
   let generation = 0;
   let loadedAt = 0;
@@ -114,14 +184,27 @@ export function createCircleStrip({ api, setAvatar, onOpen, onProfile }) {
       if (mine !== generation) return;
       const items = data.items || [];
       if (!items.length) { section.hidden = true; return; }
-      track.replaceChildren(...items.map(card));
+      const cards = items.map(card);
+      track.replaceChildren(...cards);
+      track.scrollLeft = 0;
+      delete track.dataset.looping;
+      // Enough cards to fill the row? Add a second copy so the loop has no gap.
+      window.requestAnimationFrame(() => {
+        if (mine !== generation) return;
+        if (track.scrollWidth > track.clientWidth + 40 && cards.length > 2) {
+          const copies = items.map((post) => { const clone = card(post); clone.setAttribute('aria-hidden', 'true'); clone.tabIndex = -1; return clone; });
+          track.append(...copies);
+          track.dataset.looping = 'true';
+        }
+        startMotion();
+      });
       loadedAt = Date.now();
     } catch {
       if (mine === generation) section.hidden = true;
     }
   }
 
-  function hide() { generation += 1; section.hidden = true; }
+  function hide() { generation += 1; section.hidden = true; cancelAnimationFrame(raf); }
 
   return { show, hide };
 }

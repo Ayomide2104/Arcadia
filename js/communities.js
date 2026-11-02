@@ -13,6 +13,7 @@ import { io } from 'socket.io-client';
 import { setAvatar } from './avatar.js';
 import { openLightbox } from './lightbox.js';
 import { postLink } from './share.js';
+import { createThread } from './commentThread.js';
 
 const GENRES = [
   { id: 'sports', label: 'Sports & football' },
@@ -66,6 +67,16 @@ const ARROW_UP = `<svg ${ICON_ATTRS}><path d="M12 3.5 20.5 13H15v7.5H9V13H3.5z"/
 const ARROW_DOWN = `<svg ${ICON_ATTRS}><path d="M12 20.5 3.5 11H9V3.5h6V11h5.5z"/></svg>`;
 const ICON_COMMENT = `<svg ${ICON_ATTRS}><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>`;
 const ICON_SHARE = `<svg ${ICON_ATTRS}><path d="M21 12 14 5v4C8 9.6 4.5 13.2 4 19.5c2.8-3.4 5.8-5 10-5V19l7-7z"/></svg>`;
+
+const BACK_ICON = '<svg class="back-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>';
+
+function backButton(label) {
+  const button = el('button', 'cm-back');
+  button.type = 'button';
+  button.innerHTML = BACK_ICON;
+  button.append(el('span', '', label));
+  return button;
+}
 
 export function createCommunities({ api, getUser, toast, openAuth, gameInfo, navigate, openGame, share }) {
   const state = {
@@ -794,7 +805,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
   function postCard(post, community, role, { detail = false, feed = false, onRemoved, onPinChanged } = {}) {
     const card = el('article', `cm-post${post.pinnedAt ? ' is-pinned' : ''}${detail ? ' is-detail' : ''}${feed ? ' is-feed' : ''}`);
     const main = el('div', 'cm-post-main');
-    const openThis = () => openPost(community.slug, post._id);
+    const openThis = () => openPostPage(community.slug, post._id);
 
     // Header
     if (feed) {
@@ -896,6 +907,16 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     }
     main.append(foot);
     card.append(main);
+
+    // Clicking anywhere on the card (not on a button, link or photo) opens the post.
+    if (!detail) {
+      card.classList.add('is-clickable');
+      card.addEventListener('click', (event) => {
+        if (event.target.closest('a, button, input, textarea, select, label, .cm-vote, .cm-media')) return;
+        if (String(window.getSelection?.() || '').length) return;
+        openThis();
+      });
+    }
     return card;
   }
 
@@ -1085,8 +1106,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     host.classList.toggle('is-chat', tab === 'chat');
 
     host.replaceChildren();
-    const back = el('button', 'cm-back', '← All communities');
-    back.type = 'button';
+    const back = backButton('All communities');
     back.addEventListener('click', goExplore);
 
     const banner = el('div', 'cm-banner');
@@ -1234,8 +1254,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     let comments = page.comments || [];
 
     host.replaceChildren();
-    const back = el('button', 'cm-back', `← Back to c/${community.slug}`);
-    back.type = 'button';
+    const back = backButton(`Back to c/${community.slug}`);
     back.addEventListener('click', () => open_(community.slug));
     const content = el('div', 'cm-content cm-content--posts');
     const main = el('div', 'cm-main');
@@ -1245,15 +1264,16 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     main.append(postCard(post, community, role, { detail: true, onRemoved: () => open_(community.slug), onPinChanged: () => void renderPostPage() }));
 
     const section = el('section', 'cm-comments');
-    const heading = el('h2', 'cm-comments-title');
+    const heading = el('h2', 'cm-comments-title', plural(comments.length, 'comment'));
     const thread = el('div', 'cm-thread');
+    const withAuthor = (comment) => ({ ...comment, author: comment.author?.username ? comment.author : getUser() });
 
     const form = el('form', 'cm-comment-form');
     if (getUser()) {
       const input = el('textarea', 'cm-input cm-input--area');
       input.rows = 3;
       input.maxLength = 1000;
-      input.placeholder = 'Add a comment';
+      input.placeholder = 'What are your thoughts?';
       input.setAttribute('aria-label', 'Add a comment');
       const send = el('button', 'cm-btn cm-btn--solid', 'Comment');
       send.type = 'submit';
@@ -1264,10 +1284,9 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
         send.disabled = true;
         try {
           const data = await api(`/posts/${post._id}/comments`, { method: 'POST', body: JSON.stringify({ body: input.value.trim() }) });
-          comments = [...comments, data.comment];
           post.commentCount = (post.commentCount || 0) + 1;
           input.value = '';
-          drawThread();
+          threadApi.addRoot(withAuthor(data.comment));
         } catch (error) { toast(error.message || 'Could not add your comment.'); }
         finally { send.disabled = false; }
       });
@@ -1278,64 +1297,21 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
       form.append(prompt);
     }
 
-    function commentNode(comment, parentId) {
-      const node = el('article', `cm-comment${parentId ? ' is-reply' : ''}`);
-      node.append(personAvatar(comment.author));
-      const body = el('div', 'cm-comment-body');
-      const head = el('div', 'cm-comment-head');
-      head.append(el('strong', '', `u/${comment.author?.username || 'player'}`), el('span', '', timeAgo(comment.createdAt)));
-      body.append(head, el('p', 'cm-comment-text', comment.body));
-      if (getUser()) {
-        const reply = el('button', 'cm-post-action', 'Reply');
-        reply.type = 'button';
-        reply.addEventListener('click', () => {
-          if (body.querySelector('.cm-reply-form')) return;
-          const replyForm = el('form', 'cm-reply-form');
-          const input = el('input', 'cm-input');
-          input.maxLength = 1000;
-          input.required = true;
-          input.placeholder = `Reply to u/${comment.author?.username || 'player'}`;
-          input.setAttribute('aria-label', 'Reply');
-          const send = el('button', 'cm-btn cm-btn--solid', 'Reply');
-          send.type = 'submit';
-          replyForm.append(input, send);
-          replyForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            send.disabled = true;
-            try {
-              const data = await api(`/posts/${post._id}/comments`, { method: 'POST', body: JSON.stringify({ body: input.value.trim(), parent: parentId || comment._id }) });
-              comments = [...comments, data.comment];
-              post.commentCount = (post.commentCount || 0) + 1;
-              drawThread();
-            } catch (error) { toast(error.message || 'Could not add your reply.'); send.disabled = false; }
-          });
-          body.append(replyForm);
-          input.focus();
-        });
-        body.append(reply);
-      }
-      node.append(body);
-      return node;
-    }
-
-    function drawThread() {
-      heading.textContent = plural(comments.length, 'comment');
-      thread.replaceChildren();
-      const tops = comments.filter((comment) => !comment.parent);
-      if (!tops.length) thread.append(el('p', 'cm-empty cm-empty--small', 'No comments yet. Start the conversation.'));
-      for (const top of tops) {
-        const group = el('div', 'cm-thread-group');
-        group.append(commentNode(top, null));
-        const replies = comments.filter((comment) => String(comment.parent) === String(top._id));
-        if (replies.length) {
-          const nested = el('div', 'cm-replies');
-          for (const reply of replies) nested.append(commentNode(reply, top._id));
-          group.append(nested);
-        }
-        thread.append(group);
-      }
-    }
-    drawThread();
+    const threadApi = createThread({
+      host: thread,
+      comments,
+      canReply: () => Boolean(getUser()),
+      onNeedSignIn: () => openAuth({ type: 'community', slug: community.slug }),
+      avatar: (author) => personAvatar(author),
+      name: (author) => `u/${author?.username || 'player'}`,
+      time: timeAgo,
+      onCountChange: (count) => { heading.textContent = plural(count, 'comment'); },
+      submit: async (parent, body) => {
+        const data = await api(`/posts/${post._id}/comments`, { method: 'POST', body: JSON.stringify({ body, parent: parent._id }) });
+        post.commentCount = (post.commentCount || 0) + 1;
+        return withAuthor(data.comment);
+      },
+    });
     section.append(heading, form, thread);
     main.append(section);
   }

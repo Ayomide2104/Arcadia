@@ -39,6 +39,8 @@ const limitPosts = rateLimit({
   windowMs: 15 * 60 * 1000,
 });
 
+const MAX_REPLY_DEPTH = 6;
+
 const limitComments = rateLimit({
   name: 'comment',
   max: 50,
@@ -944,24 +946,36 @@ router.post(
           });
         }
 
+        // Replies can go under any comment on this post (Reddit-style threads).
+        // Threads stop getting deeper after MAX_REPLY_DEPTH; deeper replies sit at the last level.
         const parentComment = await Comment.findOne({
           _id: req.body.parent,
           post: post._id,
-          parent: null,
         })
-          .select('_id author')
+          .select('_id author parent')
           .lean();
 
         if (!parentComment) {
           return res.status(400).json({
             success: false,
-            error:
-              'Replies can only target a top-level comment on this post.',
+            error: 'That comment is no longer available to reply to.',
           });
         }
 
-        parent = parentComment._id;
+        let target = parentComment;
+        let depth = 0;
+        let cursor = parentComment;
+        while (cursor.parent && depth < 50) {
+          depth += 1;
+          cursor = await Comment.findOne({ _id: cursor.parent, post: post._id }).select('_id parent').lean();
+          if (!cursor) break;
+        }
+        if (depth >= MAX_REPLY_DEPTH - 1 && parentComment.parent) {
+          target = await Comment.findOne({ _id: parentComment.parent, post: post._id }).select('_id author parent').lean() || parentComment;
+        }
         parentAuthor = parentComment.author;
+
+        parent = target._id;
       }
 
       const comment = await Comment.create({

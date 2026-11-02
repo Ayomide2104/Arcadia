@@ -172,7 +172,7 @@ async function deleteUserAndData(userId, { io = null } = {}) {
   // 4. Their comments, plus replies under them, with comment counts corrected.
   let commentIds = (await Comment.find({ author: userId }).select('_id').lean()).map((c) => c._id);
   const doomed = new Set(commentIds.map(String));
-  for (let depth = 0; depth < 5 && commentIds.length; depth += 1) {
+  for (let depth = 0; depth < 12 && commentIds.length; depth += 1) {
     const replies = await Comment.find({ parent: { $in: commentIds }, _id: { $nin: [...doomed] } }).select('_id').lean();
     commentIds = replies.map((c) => c._id);
     commentIds.forEach((id) => doomed.add(String(id)));

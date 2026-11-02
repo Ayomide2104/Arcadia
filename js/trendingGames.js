@@ -45,7 +45,7 @@ export function createTrendingGames({ api, gameInfo, openGame, openGames }) {
     return box;
   }
 
-  function row(game, index) {
+  function row(game) {
     const info = gameInfo(game.name);
     const known = Boolean(info.cover || info.banner);
     const cover = info.cover ? `/assets/arcadia/games/${info.cover}` : `/assets/arcadia/games/${game.slug}.jpg`;
@@ -53,9 +53,10 @@ export function createTrendingGames({ api, gameInfo, openGame, openGames }) {
 
     const item = el('button', 'tg-row');
     item.type = 'button';
+    const picks = game.picks || 0;
+    item.title = picks ? `${title} · ${picks} ${picks === 1 ? 'pick' : 'picks'}` : title;
     item.setAttribute('aria-label', `Open ${title}`);
 
-    const rank = el('span', 'tg-rank', String(index + 1));
     const tile = el('span', 'tg-tile', title[0]?.toUpperCase() || '?');
     const img = document.createElement('img');
     img.alt = '';
@@ -64,14 +65,7 @@ export function createTrendingGames({ api, gameInfo, openGame, openGames }) {
     img.addEventListener('load', () => { tile.textContent = ''; tile.append(img); }, { once: true });
     img.src = cover;
 
-    const text = el('span', 'tg-text');
-    text.append(el('strong', 'tg-name', title));
-    const genre = known ? info.genre : (game.genres || []).slice(0, 2).join(' · ');
-    const picks = game.picks || 0;
-    text.append(el('span', 'tg-meta', [picks ? `${picks} ${picks === 1 ? 'pick' : 'picks'}` : '', (genre || '').split(' · ')[0]].filter(Boolean).join(' · ')));
-
-    item.append(rank, tile, text);
-    if (index === 0) item.append(flame());
+    item.append(tile, el('span', 'tg-name', title));
     item.addEventListener('click', () => openGame(game.slug));
     return item;
   }
@@ -81,12 +75,12 @@ export function createTrendingGames({ api, gameInfo, openGame, openGames }) {
     if (Date.now() - loadedAt < 60000 && host.children.length) return;
     loading = true;
     try {
-      const data = await api('/games/popular?limit=5');
+      const data = await api('/games/popular?limit=6');
       const items = (data.items || []).filter((game) => game.picks > 0 || (data.items || []).length <= 5);
       host.replaceChildren(head());
       if (!items.length) { host.append(empty('Popular games will show up here as players pick them.')); return; }
       const list = el('div', 'tg-list');
-      items.forEach((game, index) => list.append(row(game, index)));
+      items.forEach((game) => list.append(row(game)));
       host.append(list);
       loadedAt = Date.now();
     } catch {
@@ -98,7 +92,7 @@ export function createTrendingGames({ api, gameInfo, openGame, openGames }) {
 
   host.replaceChildren(head());
   const skeleton = el('div', 'tg-list');
-  for (let i = 0; i < 3; i += 1) skeleton.append(el('div', 'tg-row tg-row--skeleton'));
+  for (let i = 0; i < 4; i += 1) skeleton.append(el('div', 'tg-row tg-row--skeleton'));
   host.append(skeleton);
 
   return { refresh };
