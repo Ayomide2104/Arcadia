@@ -180,8 +180,9 @@ $$('[data-action="compose"]').forEach((button) => button.addEventListener('click
   composer.open({ photo: label === 'Photo', pickDestination: label === 'Add game' });
 }));
 
-$('.dialog-close').addEventListener('click', () => dialog.close());
-$('#auth-close')?.addEventListener('click', () => dialog.close());
+$$('.dialog-close, #auth-close').forEach((button) =>
+  button.addEventListener('click', () => dialog.close())
+);
 dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 $$('[data-auth-mode]').forEach((button) =>
   button.addEventListener('click', () =>
