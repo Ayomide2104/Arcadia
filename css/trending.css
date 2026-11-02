@@ -1,0 +1,20 @@
+/* Feed sidebar: Online now + Trending games */
+.tg-list { display: grid; gap: 4px; margin-top: 10px; }
+.tg-row { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 6px 8px; border: 0; border-radius: 14px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background .15s; }
+.tg-row:hover { background: rgb(90 63 214 / 7%); }
+.tg-row:focus-visible { outline: 3px solid #5a3fd6; outline-offset: 2px; }
+.tg-row--skeleton { height: 56px; cursor: default; background: linear-gradient(90deg, #eff0f4, #e4e6ec, #eff0f4); background-size: 200% 100%; animation: tg-shimmer 1.2s linear infinite; }
+.tg-rank { flex: none; width: 16px; color: var(--muted, #667085); font-size: 13px; font-weight: 700; text-align: center; }
+.tg-row:first-child .tg-rank { color: #ff6a3d; }
+.tg-tile { display: grid; flex: none; place-items: center; width: 44px; height: 44px; overflow: hidden; border-radius: 12px; background: linear-gradient(135deg, #7c5cff, #2dd4bf); color: #fff; font-weight: 700; }
+.tg-tile img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.tg-text { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.tg-name { overflow: hidden; color: var(--text, #14171f); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.tg-meta { overflow: hidden; color: var(--muted, #667085); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.tg-flame { flex: none; width: 18px; height: 18px; fill: #ff6a3d; stroke: none; }
+.tg-empty { display: grid; justify-items: start; gap: 6px; padding: 12px 0 2px; }
+.tg-empty p { margin: 0; color: var(--muted, #667085); font-size: 14px; }
+.tg-link { padding: 0; border: 0; background: none; color: var(--accent, #5a3fd6); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.tg-link:hover { text-decoration: underline; }
+@keyframes tg-shimmer { to { background-position: -200% 0; } }
+@media (max-width: 899px) { .tg-name { max-width: 100%; } }

@@ -103,7 +103,7 @@ router.get('/feed', requireAuth, async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 20, 1), 30);
     const memberships = await Membership.find({ user: req.user._id }).select('community').lean();
-    const communities = await Community.find({ _id: { $in: memberships.map((entry) => entry.community) }, active: true }).select('slug').lean();
+    const communities = await Community.find({ _id: { $in: memberships.map((entry) => entry.community) }, active: true }).select('slug name accent').lean();
     const slugs = communities.map((community) => community.slug);
     if (!slugs.length) return res.json({ success: true, data: { items: [], nextCursor: null } });
     const query = { removedAt: null, destinations: { $elemMatch: { type: 'community', target: { $in: slugs } } } };
@@ -111,8 +111,16 @@ router.get('/feed', requireAuth, async (req, res, next) => {
       if (!mongoose.Types.ObjectId.isValid(req.query.cursor)) return res.status(400).json({ success: false, error: 'Invalid pagination cursor.' });
       query._id = { $lt: req.query.cursor };
     }
-    const items = await Post.find(query).sort({ _id: -1 }).limit(limit).populate('author', 'username displayName avatar').lean();
-    res.json({ success: true, data: { items, nextCursor: items.length === limit ? String(items.at(-1)._id) : null } });
+    const posts = await Post.find(query).sort({ _id: -1 }).limit(limit).populate('author', 'username displayName avatar').lean();
+    // Each post knows which community it belongs to, so the feed can show "c/name" like a subreddit post.
+    const bySlug = new Map(communities.map((community) => [community.slug, community]));
+    const withCommunity = posts.map((post) => {
+      const target = (post.destinations || []).find((destination) => destination.type === 'community' && bySlug.has(destination.target));
+      const community = target ? bySlug.get(target.target) : null;
+      return { ...post, community: community ? { slug: community.slug, name: community.name, accent: community.accent } : null };
+    });
+    const items = await attachVotes(withCommunity, req.user);
+    res.json({ success: true, data: { items, nextCursor: posts.length === limit ? String(posts.at(-1)._id) : null } });
   } catch (error) { next(error); }
 });
 

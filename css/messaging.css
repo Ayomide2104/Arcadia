@@ -707,3 +707,5 @@ body.arc-chat-open {
     transition-duration: 0.01ms !important;
   }
 }
+
+.arc-chat-link { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }

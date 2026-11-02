@@ -1,4 +1,5 @@
 import { setAvatar } from './avatar.js';
+import { presence } from './presence.js';
 import { io } from 'socket.io-client';
 
 /*
@@ -7,7 +8,30 @@ import { io } from 'socket.io-client';
   (one pane at a time on phones). Same public API as before:
   init, connect, disconnect, openChat, openInbox, refreshConversations.
 */
-export function createMessaging({ api, getCurrentUser, toast }) {
+
+// Turns http(s) links in a chat message into tappable links (text stays text, never HTML).
+function appendLinkedText(node, content) {
+  const pattern = /https?:\/\/[^\s<]+/g;
+  let last = 0;
+  for (const match of content.matchAll(pattern)) {
+    if (match.index > last) node.append(document.createTextNode(content.slice(last, match.index)));
+    const link = document.createElement('a');
+    link.href = match[0];
+    link.textContent = match[0].replace(/^https?:\/\//, '');
+    link.rel = 'noopener noreferrer';
+    if (new URL(match[0], location.href).origin === location.origin) {
+      link.className = 'arc-chat-link';
+    } else {
+      link.target = '_blank';
+      link.className = 'arc-chat-link';
+    }
+    node.append(link);
+    last = match.index + match[0].length;
+  }
+  if (last < content.length) node.append(document.createTextNode(content.slice(last)));
+}
+
+export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
   let socket = null;
   let activeUsername = null;
   let activeFriend = null;
@@ -243,7 +267,8 @@ export function createMessaging({ api, getCurrentUser, toast }) {
     if (item.id) row.dataset.messageId = item.id;
 
     const bubble = element('div', 'arc-chat-bubble');
-    const text = element('p', 'arc-chat-message-text', item.content || '');
+    const text = element('p', 'arc-chat-message-text');
+    appendLinkedText(text, item.content || '');
     const meta = element('span', 'arc-chat-message-meta');
     const time = element('time', 'arc-chat-time', formatClock(item.createdAt));
     if (created) time.dateTime = created.toISOString();
@@ -329,6 +354,7 @@ export function createMessaging({ api, getCurrentUser, toast }) {
         (person.displayName || person.username).slice(0, 1).toUpperCase()
       );
       setAvatar(avatar, person.avatar, avatar.textContent);
+      presence.mark(avatar, person.username);
 
       const details = element('span', 'arc-chat-list-details');
 
@@ -395,6 +421,8 @@ export function createMessaging({ api, getCurrentUser, toast }) {
     chatStatus.textContent = `@${friend.username}`;
     chatAvatar.textContent = (friend.displayName || friend.username).slice(0, 1).toUpperCase();
     setAvatar(chatAvatar, friend.avatar, chatAvatar.textContent);
+    presence.mark(chatAvatar, friend.username);
+    presence.bindLabel(chatStatus, friend.username, `@${friend.username}`);
 
     panel.hidden = false;
     emptyState.hidden = true;
@@ -433,6 +461,8 @@ export function createMessaging({ api, getCurrentUser, toast }) {
       chatStatus.textContent = `@${activeFriend.username}`;
       chatAvatar.textContent = (activeFriend.displayName || activeFriend.username).slice(0, 1).toUpperCase();
       setAvatar(chatAvatar, activeFriend.avatar, chatAvatar.textContent);
+      presence.mark(chatAvatar, activeFriend.username);
+      presence.bindLabel(chatStatus, activeFriend.username, `@${activeFriend.username}`);
 
       renderMessages(result.items || []);
       await markConversationRead(friend.username);
@@ -575,7 +605,11 @@ export function createMessaging({ api, getCurrentUser, toast }) {
 
       socket.on('connect', () => {
         void refreshConversations();
+        // Friends may have come online or gone offline while we were disconnected.
+        onPresence?.({ reconnect: true });
       });
+
+      socket.on('presence:update', (payload) => onPresence?.(payload));
 
       socket.on('message:new', handleIncomingMessage);
       socket.on('message:read', handleReadReceipt);

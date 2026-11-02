@@ -42,7 +42,7 @@ export function createFeedExtras({ api, toast, getUser }) {
   }
 
   function decorate(article, post) {
-    const header = article.querySelector('.post-card__head');
+    const header = article.querySelector('.post-card__head, .cm-post-head');
     const reason = post.feed?.reason;
     const context = article.querySelector('.pc-context');
     // Only reasons that tell the player something. "Something new" and "seen before" are noise.

@@ -11,6 +11,8 @@
 */
 import { io } from 'socket.io-client';
 import { setAvatar } from './avatar.js';
+import { openLightbox } from './lightbox.js';
+import { postLink } from './share.js';
 
 const GENRES = [
   { id: 'sports', label: 'Sports & football' },
@@ -59,10 +61,13 @@ function timeAgo(value) {
 
 const initials = (name) => String(name).split(/\s+/).map((word) => word[0]).slice(0, 2).join('').toUpperCase();
 
-const ARROW_UP = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const ARROW_DOWN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_ATTRS = 'viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"';
+const ARROW_UP = `<svg ${ICON_ATTRS}><path d="M12 3.5 20.5 13H15v7.5H9V13H3.5z"/></svg>`;
+const ARROW_DOWN = `<svg ${ICON_ATTRS}><path d="M12 20.5 3.5 11H9V3.5h6V11h5.5z"/></svg>`;
+const ICON_COMMENT = `<svg ${ICON_ATTRS}><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>`;
+const ICON_SHARE = `<svg ${ICON_ATTRS}><path d="M21 12 14 5v4C8 9.6 4.5 13.2 4 19.5c2.8-3.4 5.8-5 10-5V19l7-7z"/></svg>`;
 
-export function createCommunities({ api, getUser, toast, openAuth, gameInfo, navigate, openGame }) {
+export function createCommunities({ api, getUser, toast, openAuth, gameInfo, navigate, openGame, share }) {
   const state = {
     route: { name: 'explore' },
     joined: null, // Map slug -> role, null until loaded
@@ -687,8 +692,11 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
 
   /* ---------- Votes ---------- */
 
+  // Reddit-style vote pill: up arrow, score, down arrow.
   function voteRail(post, community) {
     const rail = el('div', 'cm-vote');
+    rail.setAttribute('role', 'group');
+    rail.setAttribute('aria-label', 'Vote');
     const up = el('button', 'cm-vote-btn cm-vote-btn--up');
     const down = el('button', 'cm-vote-btn cm-vote-btn--down');
     up.type = down.type = 'button';
@@ -709,13 +717,17 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     };
     paint();
 
-    async function cast(value) {
+    async function cast(value, button) {
       if (!getUser()) { openAuth({ type: 'community', slug: community.slug }); return; }
       const before = { score: post.score || 0, vote: post.myVote || 0 };
       const next = before.vote === value ? 0 : value;
       post.score = before.score + (next - before.vote);
       post.myVote = next;
       paint();
+      if (next !== 0) {
+        button.classList.add('is-pop');
+        window.setTimeout(() => button.classList.remove('is-pop'), 300);
+      }
       try {
         const result = await api(`/communities/${community.slug}/posts/${post._id}/vote`, { method: 'PUT', body: JSON.stringify({ value: next }) });
         post.score = result.score;
@@ -727,8 +739,8 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
       }
       paint();
     }
-    up.addEventListener('click', () => void cast(1));
-    down.addEventListener('click', () => void cast(-1));
+    up.addEventListener('click', () => void cast(1, up));
+    down.addEventListener('click', () => void cast(-1, down));
     return rail;
   }
 
@@ -739,16 +751,73 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     return `Posted by u/${name} · ${timeAgo(post.createdAt)}`;
   }
 
-  function postCard(post, community, role, { detail = false, onRemoved, onPinChanged } = {}) {
-    const card = el('article', `cm-post${post.pinnedAt ? ' is-pinned' : ''}${detail ? ' is-detail' : ''}`);
-    card.append(voteRail(post, community));
+  function pill(className, html, label) {
+    const node = el('button', `cm-pill ${className}`);
+    node.type = 'button';
+    node.innerHTML = html;
+    if (label !== undefined) node.append(el('span', 'cm-pill-label', label));
+    return node;
+  }
 
+  function postImages(post) {
+    return (Array.isArray(post.media) ? post.media : [])
+      .filter((item) => item && item.type === 'image' && typeof item.url === 'string' && /^https:\/\//i.test(item.url));
+  }
+
+  function postMedia(post) {
+    const images = postImages(post);
+    if (!images.length) return null;
+    const wrap = el('div', 'cm-media');
+    const viewable = images.map((image, index) => ({ url: image.url, alt: `Photo ${index + 1} in ${post.title || 'this post'}` }));
+    const button = el('button', 'cm-media-btn');
+    button.type = 'button';
+    button.setAttribute('aria-label', images.length > 1 ? `View ${images.length} photos` : 'View photo');
+    const img = document.createElement('img');
+    img.src = images[0].url;
+    img.alt = viewable[0].alt;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.addEventListener('error', () => wrap.remove(), { once: true });
+    button.append(img);
+    if (images.length > 1) button.append(el('span', 'cm-media-more', `1/${images.length}`));
+    button.addEventListener('click', (event) => { event.stopPropagation(); openLightbox(viewable, 0); });
+    wrap.append(button);
+    return wrap;
+  }
+
+  function sharePost(post, community) {
+    const author = post.author?.username ? `u/${post.author.username} in c/${community.slug}` : `c/${community.slug}`;
+    if (share) share.open({ url: postLink(post._id), title: post.title || '', text: post.body || '', author });
+    else toast('Sharing is not available right now.');
+  }
+
+  function postCard(post, community, role, { detail = false, feed = false, onRemoved, onPinChanged } = {}) {
+    const card = el('article', `cm-post${post.pinnedAt ? ' is-pinned' : ''}${detail ? ' is-detail' : ''}${feed ? ' is-feed' : ''}`);
     const main = el('div', 'cm-post-main');
-    const meta = el('div', 'cm-post-meta');
-    if (post.pinnedAt) meta.append(el('span', 'cm-pinned', 'Pinned'));
-    if (post.flair) meta.append(el('span', 'cm-flair', post.flair));
-    meta.append(el('span', 'cm-post-by', authorLine(post)));
-    main.append(meta);
+    const openThis = () => openPost(community.slug, post._id);
+
+    // Header
+    if (feed) {
+      const head = el('div', 'cm-post-head');
+      const badge = el('span', 'cm-post-badge', (community.name || community.slug)[0].toUpperCase());
+      if (/^#[0-9a-f]{6}$/i.test(community.accent || '')) badge.style.setProperty('--cm-badge', community.accent);
+      const where = el('button', 'cm-post-community', `c/${community.slug}`);
+      where.type = 'button';
+      where.addEventListener('click', (event) => { event.stopPropagation(); open_(community.slug); });
+      const by = el('span', 'cm-post-by', `u/${post.author?.username || 'player'} · ${timeAgo(post.createdAt)}`);
+      const who = el('div', 'cm-post-who');
+      who.append(where, by);
+      head.append(badge, who);
+      if (post.pinnedAt) head.append(el('span', 'cm-pinned', 'Pinned'));
+      main.append(head);
+      if (post.flair) main.append(el('span', 'cm-flair cm-flair--solo', post.flair));
+    } else {
+      const meta = el('div', 'cm-post-meta');
+      if (post.pinnedAt) meta.append(el('span', 'cm-pinned', 'Pinned'));
+      if (post.flair) meta.append(el('span', 'cm-flair', post.flair));
+      meta.append(el('span', 'cm-post-by', authorLine(post)));
+      main.append(meta);
+    }
 
     if (post.title) {
       const title = detail ? el('h2', 'cm-post-title') : el('h3', 'cm-post-title');
@@ -756,7 +825,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
       else {
         const link = el('button', 'cm-post-link', post.title);
         link.type = 'button';
-        link.addEventListener('click', () => openPost(community.slug, post._id));
+        link.addEventListener('click', openThis);
         title.append(link);
       }
       main.append(title);
@@ -767,21 +836,30 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
         // Older posts have no title: the text itself opens the post.
         body.classList.add('is-link');
         body.tabIndex = 0;
-        body.addEventListener('click', () => openPost(community.slug, post._id));
-        body.addEventListener('keydown', (event) => { if (event.key === 'Enter') openPost(community.slug, post._id); });
+        body.addEventListener('click', openThis);
+        body.addEventListener('keydown', (event) => { if (event.key === 'Enter') openThis(); });
       }
       main.append(body);
     }
+    const media = postMedia(post);
+    if (media) main.append(media);
 
+    // Footer: vote pill, comments, share, then moderation.
     const foot = el('div', 'cm-post-foot');
-    const comments = el('button', 'cm-post-action', `💬 ${plural(post.commentCount || 0, 'comment')}`);
-    comments.type = 'button';
-    if (!detail) comments.addEventListener('click', () => openPost(community.slug, post._id));
+    foot.append(voteRail(post, community));
+
+    const comments = pill('cm-post-action cm-pill--comments', ICON_COMMENT, formatCount(post.commentCount || 0));
+    comments.setAttribute('aria-label', `${plural(post.commentCount || 0, 'comment')}`);
+    if (!detail) comments.addEventListener('click', openThis);
     else comments.disabled = true;
     foot.append(comments);
 
-    if (['owner', 'moderator'].includes(role)) {
-      const pin = el('button', 'cm-post-action', post.pinnedAt ? 'Unpin' : 'Pin');
+    const shareButton = pill('cm-post-action cm-pill--share', ICON_SHARE, 'Share');
+    shareButton.addEventListener('click', () => sharePost(post, community));
+    foot.append(shareButton);
+
+    if (!feed && ['owner', 'moderator'].includes(role)) {
+      const pin = el('button', 'cm-post-action cm-post-action--text', post.pinnedAt ? 'Unpin' : 'Pin');
       pin.type = 'button';
       pin.addEventListener('click', async () => {
         pin.disabled = true;
@@ -791,7 +869,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
           if (onPinChanged) onPinChanged();
         } catch (error) { toast(error.message); pin.disabled = false; }
       });
-      const remove = el('button', 'cm-post-action cm-post-action--danger', 'Remove');
+      const remove = el('button', 'cm-post-action cm-post-action--text cm-post-action--danger', 'Remove');
       remove.type = 'button';
       remove.addEventListener('click', async () => {
         remove.disabled = true;
@@ -802,8 +880,8 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
         } catch (error) { toast(error.message); remove.disabled = false; }
       });
       foot.append(pin, remove);
-    } else if (getUser() && post.author?.username && post.author.username === getUser().username) {
-      const mine = el('button', 'cm-post-action cm-post-action--danger', 'Delete');
+    } else if (!feed && getUser() && post.author?.username && post.author.username === getUser().username) {
+      const mine = el('button', 'cm-post-action cm-post-action--text cm-post-action--danger', 'Delete');
       mine.type = 'button';
       mine.addEventListener('click', async () => {
         if (!window.confirm('Delete your post from this community?')) return;
@@ -819,6 +897,23 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     main.append(foot);
     card.append(main);
     return card;
+  }
+
+  /* A community post as it appears in the home feed (same card as on the community page). */
+  function feedCard(post) {
+    const target = (post.destinations || []).find((destination) => destination.type === 'community' && destination.target);
+    const slug = post.community?.slug || target?.target || '';
+    const community = {
+      slug,
+      name: post.community?.name || post.labels?.[`community:${slug}`] || slug,
+      accent: post.community?.accent || ''
+    };
+    return postCard(post, community, null, { feed: true });
+  }
+
+  function openPostPage(slug, id) {
+    state.route = { name: 'post', slug, id };
+    navigate('groups');
   }
 
   /* ---------- Post composer ---------- */
@@ -1923,5 +2018,5 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     navigate('groups');
   }
 
-  return { show, open: open_, openCreate, openExplore, renderProfileSection, reset };
+  return { show, open: open_, openCreate, openExplore, renderProfileSection, reset, feedCard, openPostPage };
 }

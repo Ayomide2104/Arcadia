@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { Server } = require('socket.io');
 const Session = require('./models/Session');
 const User = require('./models/User');
+const presence = require('./services/presence');
 
 function getAllowedOrigins() {
   const isDeployed =
@@ -145,8 +146,14 @@ function attachSocketServer(httpServer, app) {
     // Community group chat: subscribe, typing and presence.
     require('./communitySocket').attachCommunitySocket(io, socket);
 
+    // Friends' online status: online while at least one socket is connected.
+    void presence.connected(io, socket).catch((error) => {
+      console.warn('Could not register presence:', error.message);
+    });
+
     socket.on('disconnect', () => {
       // Socket.IO automatically removes the socket from its rooms.
+      presence.disconnected(io, socket);
     });
   });
 

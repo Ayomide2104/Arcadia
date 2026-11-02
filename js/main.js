@@ -8,6 +8,9 @@ import { createFeedExtras } from './feedExtras.js';
 import { createComposer } from './composer.js';
 import { openLightbox } from './lightbox.js';
 import { createCircleStrip } from './circle.js';
+import { presence } from './presence.js';
+import { createTrendingGames } from './trendingGames.js';
+import { createShare, postLink } from './share.js';
 import { createNotifications } from './notifications.js';
 
 let notifications = null;
@@ -28,6 +31,13 @@ const circle = createCircleStrip({
   onOpen: (post, trigger) => openComments(post, trigger),
 });
 const feedExtras = createFeedExtras({ api: (path, options) => api(path, options), toast: (message) => toast(message), getUser: () => currentUser });
+presence.configure({
+  api: (path, options) => api(path, options),
+  getUser: () => currentUser,
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  onOpenFriends: () => selectView('friends'),
+  onNeedSignIn: () => openAuth(),
+});
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
@@ -37,13 +47,15 @@ let currentUser = null;
 let returnTo = null;
 let csrfToken = null;
 let messaging = null;
+presence.mountPanel($('#online-panel'));
 
 function syncMessagingSession() {
   if (!messaging) {
     messaging = createMessaging({
       api,
       getCurrentUser: () => currentUser,
-      toast
+      toast,
+      onPresence: (payload) => presence.handle(payload)
     });
   }
 
@@ -140,8 +152,7 @@ window.addEventListener('scroll', () => {
 
 $$('.feed-tab').forEach((tab, index) => {
   tab.addEventListener('click', () => {
-    if (tab.dataset.filter === 'friends') { toast('Friends feed will unlock with friend connections.'); return; }
-    if (tab.dataset.filter === 'groups' && !currentUser) { openAuth(); return; }
+    if ((tab.dataset.filter === 'friends' || tab.dataset.filter === 'groups') && !currentUser) { openAuth(); return; }
     $$('.feed-tab').forEach((item) => {
       const active = item === tab;
       item.classList.toggle('is-selected', active);
@@ -313,6 +324,7 @@ function updateSignedInUI() {
   if ($('#comments-form')) { $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser); }
   setAvatar($('.avatar--composer'), currentUser?.avatar, currentUser?.username?.[0]?.toUpperCase() || '?');
   if (currentUser) notifications?.refresh(); else notifications?.reset();
+  presence.sync();
   $$('[data-action="signin"]').forEach((button) => {
     if (!button.dataset.originalLabel) button.dataset.originalLabel = button.textContent;
     if (currentUser) {
@@ -403,12 +415,11 @@ async function loadFeed(filter = activeFeed, cursor = null) {
 
     if (generation !== feedGeneration) return;
 
-    // Community posts can have a title; show it above the text in the shared post card.
-    const items = (result.items || []).map((item) => (filter === 'groups' ? { ...item, body: [item.title, item.body].filter(Boolean).join('\n\n') } : item));
+    const items = result.items || [];
 
     for (const item of items) {
       if (item.feed?.divider) list.append(feedExtras.divider());
-      const node = renderPost(item);
+      const node = renderFeedItem(item);
       if (filter !== 'groups') {
         feedExtras.decorate(node, item);
         seenTracker.observe(node);
@@ -421,6 +432,18 @@ async function loadFeed(filter = activeFeed, cursor = null) {
     if (!items.length && !cursor && filter === 'groups') {
       state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>No community posts yet</h2><p>Join a few communities and their posts will show up here.</p><button class="button button--primary" type="button" id="feed-find-communities">Find communities</button>';
       $('#feed-find-communities')?.addEventListener('click', () => selectView('groups'));
+      return;
+    }
+
+    if (!items.length && !cursor && filter === 'friends') {
+      const noFriends = result.unavailable === 'no-friends';
+      state.innerHTML = `<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-friends.svg" alt=""/><h2>${noFriends ? 'Add friends to fill this feed' : 'Your friends are quiet'}</h2><p>${noFriends ? 'Posts from your friends show up here once you connect.' : 'Nothing from your friends yet. Be the first to start the conversation.'}</p>`;
+      const action = document.createElement('button');
+      action.className = 'button button--primary';
+      action.type = 'button';
+      action.textContent = noFriends ? 'Find friends' : 'Write a post';
+      action.addEventListener('click', () => (noFriends ? selectView('friends') : composePost()));
+      state.append(action);
       return;
     }
 
@@ -517,7 +540,7 @@ function iconSvg(name) {
     heart: '<path d="M20.8 8.7c0 4.3-8.8 10-8.8 10s-8.8-5.7-8.8-10A4.7 4.7 0 0 1 12 6.2a4.7 4.7 0 0 1 8.8 2.5Z"/>',
     comment: '<path d="M20.5 11.7a8.2 8.2 0 0 1-8.5 7.8 9 9 0 0 1-3.4-.7L4 20l1.2-4a7.2 7.2 0 0 1-2.2-5.1A8.1 8.1 0 0 1 11.5 3h.5a8.2 8.2 0 0 1 8.5 8.2v.5Z"/>',
     repost: '<path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
-    share: '<path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/>'
+    share: '<path d="M21 12 14 5v4C8 9.6 4.5 13.2 4 19.5c2.8-3.4 5.8-5 10-5V19l7-7z"/>'
   };
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.innerHTML = paths[name];
@@ -570,6 +593,19 @@ function richText(text, onMention) {
   }
   if (last < text.length) fragment.append(text.slice(last));
   return fragment;
+}
+
+// A post shared to a community is drawn like a subreddit post (votes, c/name header, title).
+function isCommunityPost(post) {
+  return post?.type !== 'repost' && (post?.destinations || []).some((destination) => destination.type === 'community' && destination.target);
+}
+
+function renderFeedItem(post) {
+  if (!isCommunityPost(post)) return renderPost(post);
+  const node = communitiesPage.feedCard(post);
+  node.id = `post-${post._id}`;
+  node.dataset.postId = post._id;
+  return node;
 }
 
 function renderPost(post) {
@@ -976,17 +1012,12 @@ function renderPost(post) {
   });
 
   // Share
-  shareButton.addEventListener('click', async () => {
-    const link = new URL(location.href);
-
-    link.hash = `post/${post._id}`;
-
-    try {
-      await navigator.clipboard.writeText(link.toString());
-      toast('Post link copied.');
-    } catch {
-      toast('Could not copy the post link.');
-    }
+  shareButton.addEventListener('click', () => {
+    share.open({
+      url: postLink(post._id),
+      text: post.body || '',
+      author: post.author?.username ? `${authorName} (@${post.author.username})` : authorName,
+    });
   });
 
   actions.className = 'post-actions pc-actions';
@@ -1209,10 +1240,7 @@ window.visualViewport?.addEventListener('resize', () => { document.documentEleme
 window.addEventListener('popstate', syncCommentsRoute); window.addEventListener('hashchange', syncCommentsRoute);
 if (/^#post\/[a-f\d]{24}$/i.test(location.hash)) window.setTimeout(syncCommentsRoute, 0);
 
-function renderComment(item){const line=document.createElement('div');line.className='comment-line';const author=document.createElement('strong');author.textContent=`@${item.author?.username||'player'} `;const body=document.createElement('span');body.textContent=item.body;line.append(author,body);return line;}
-function addReplyForm(postId,parentId,anchor){if($('.reply-form',anchor.parentElement))return;const form=document.createElement('form');form.className='comment-form reply-form';const input=document.createElement('input');input.maxLength=1000;input.required=true;input.placeholder='Write a reply';const submit=document.createElement('button');submit.type='submit';submit.textContent='Reply';form.append(input,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{const result=await api(`/posts/${postId}/comments`,{method:'POST',body:JSON.stringify({body:input.value,parent:parentId})});const line=renderComment(result.comment);line.classList.add('comment-reply');form.after(line);form.remove();toast('Reply added.');}catch(error){toast(error.message);submit.disabled=false;}});anchor.after(form);input.focus();}
 function createOwnerTools(slug){const form=document.createElement('form');form.className='community-owner-tools glass-panel';const title=document.createElement('h3');title.textContent='Manage moderators';const username=document.createElement('input');username.placeholder='Member username';username.pattern='[A-Za-z0-9_]{3,24}';username.required=true;username.setAttribute('aria-label','Member username');const role=document.createElement('select');role.setAttribute('aria-label','Member role');for(const value of ['moderator','member']){const option=document.createElement('option');option.value=value;option.textContent=value==='moderator'?'Make moderator':'Make member';role.append(option);}const submit=document.createElement('button');submit.className='button';submit.type='submit';submit.textContent='Update role';form.append(title,username,role,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{await api(`/communities/${slug}/members/${encodeURIComponent(username.value)}/role`,{method:'PATCH',body:JSON.stringify({role:role.value})});toast('Member role updated.');}catch(error){toast(error.message);}finally{submit.disabled=false;}});return form;}
-async function openPostDetail(postId){let modal=$('#post-detail-dialog');if(!modal){modal=document.createElement('dialog');modal.id='post-detail-dialog';modal.className='auth-dialog glass-panel';document.body.append(modal);}modal.replaceChildren();const title=document.createElement('h2');title.textContent='Post discussion';const loading=document.createElement('p');loading.textContent='Loading conversation…';modal.append(title,loading);if(!modal.open)modal.showModal();try{const data=await api(`/posts/${postId}`);modal.replaceChildren(title);const body=document.createElement('p');body.className='post-card__body';body.textContent=data.post.body;modal.append(body);const list=document.createElement('div');list.className='post-comments';for(const comment of data.comments){const line=renderComment(comment);if(comment.parent)line.classList.add('comment-reply');list.append(line);if(currentUser&&!comment.parent){const reply=document.createElement('button');reply.className='text-button';reply.type='button';reply.textContent='Reply';reply.addEventListener('click',()=>addReplyForm(postId,comment._id,line));line.append(reply);}}modal.append(list);if(currentUser){const form=document.createElement('form');form.className='comment-form';const input=document.createElement('input');input.required=true;input.maxLength=1000;input.placeholder='Add to the conversation';const send=document.createElement('button');send.type='submit';send.textContent='Comment';form.append(input,send);form.addEventListener('submit',async(event)=>{event.preventDefault();send.disabled=true;try{const result=await api(`/posts/${postId}/comments`,{method:'POST',body:JSON.stringify({body:input.value})});list.append(renderComment(result.comment));input.value='';toast('Comment added.');}catch(error){toast(error.message);}finally{send.disabled=false;}});modal.append(form);}else{const signIn=document.createElement('button');signIn.type='button';signIn.className='button button--primary';signIn.textContent='Sign in to comment';signIn.addEventListener('click',()=>{modal.close();openAuth({type:'comment',id:postId});});modal.append(signIn);}}catch(error){loading.textContent=error.message;}}
 
 /* The Games and Communities pages live in js/games.js and js/communities.js. */
 const gamesPage = createGames({
@@ -1230,7 +1258,14 @@ const gamesPage = createGames({
   findCommunities: (slug) => communitiesPage.openExplore({ game: slug })
 });
 
+const share = createShare({
+  api: (path, options) => api(path, options),
+  getUser: () => currentUser,
+  toast: (message) => toast(message),
+});
+
 const communitiesPage = createCommunities({
+  share,
   api,
   getUser: () => currentUser,
   toast,
@@ -1239,6 +1274,14 @@ const communitiesPage = createCommunities({
   navigate: (view) => selectView(view),
   openGame: (slug) => gamesPage.openGame(slug)
 });
+
+const trendingGames = createTrendingGames({
+  api,
+  gameInfo: getArcadiaGame,
+  openGame: (slug) => { selectView('games'); gamesPage.openGame(slug); },
+  openGames: () => selectView('games'),
+});
+trendingGames.refresh();
 
 function loadGames() { void gamesPage.show(); }
 function loadCommunities() { void communitiesPage.show(); }
@@ -1294,9 +1337,7 @@ function startOnboarding() {
 }
 
 /* Arcadia profile, edit-profile sheet and settings.
-   PASTE THIS OVER the old renderProfile, loadProfilePosts, editProfile and renderSettings
-   in js/main.js (everything from "async function renderProfile" up to, but not including,
-   "function composePost"). */
+   Profile page, edit sheet and settings. */
 
 function uiEl(tag, className, text) {
   const node = document.createElement(tag);
@@ -1910,7 +1951,7 @@ function pfEmpty(art, title, copy, actionLabel, action) {
 }
 
 /* Friend buttons for other people's profiles.
-   PASTE THIS right above "async function renderProfile" in js/main.js. */
+   (profile friend actions) */
 
 function pfConfirm(title, message, confirmLabel) {
   return new Promise((resolve) => {
@@ -1986,13 +2027,13 @@ else if (info.status === 'friends') {
 }
 
 /* Friends page: Friends list, Requests and Find players.
-   PASTE this right above "async function renderProfile" in js/main.js.
-   It uses helpers you already have: uiEl, pfEmpty, pfConfirm, api, toast, currentUser, openAuth, selectView, renderProfile. */
+   Uses helpers: uiEl, pfEmpty, pfConfirm, api, toast, currentUser, openAuth, selectView, renderProfile. */
 
 function fdAvatar(person) {
   const name = person.displayName || person.username;
   const node = uiEl('span', 'fd-avatar', name[0].toUpperCase()); setAvatar(node, person.avatar, name[0].toUpperCase());
   node.setAttribute('aria-hidden', 'true');
+  presence.mark(node, person.username);
   return node;
 }
 
@@ -2000,7 +2041,9 @@ function fdRow(person, fill) {
   const row = uiEl('div', 'fd-item');
   const main = uiEl('button', 'fd-main'); main.type = 'button';
   main.setAttribute('aria-label', `Open ${person.displayName || person.username}'s profile`);
-  main.append(uiEl('span', 'fd-name', person.displayName || person.username), uiEl('span', 'fd-handle', `@${person.username}`));
+  const handleLine = uiEl('span', 'fd-handle', `@${person.username}`);
+  presence.bindLabel(handleLine, person.username, `@${person.username}`, `@${person.username} · `);
+  main.append(uiEl('span', 'fd-name', person.displayName || person.username), handleLine);
   if (person.bio) main.append(uiEl('span', 'fd-bio', person.bio));
   main.addEventListener('click', () => { selectView('profile'); void renderProfile(person.username); });
   const actions = uiEl('div', 'fd-actions');
@@ -2854,7 +2897,7 @@ function showNewPost(post) {
   if (!post) { void loadFeed(); return; }
   const list = $('#post-list');
   if (!list || activeFeed === 'groups' || $('#view-feed')?.hidden) return;
-  const node = renderPost(post);
+  const node = renderFeedItem(post);
   node.classList.add('is-new');
   list.prepend(node);
   const state = $('#feed-state');

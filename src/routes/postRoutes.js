@@ -5,6 +5,7 @@ const cloudinary = require('../config/cloudinary');
 const uploadImage = require('../middleware/imageUpload');
 const Comment = require('../models/Comment');
 const Reaction = require('../models/Reaction');
+const Vote = require('../models/Vote');
 const Repost = require('../models/Repost');
 const Game = require('../models/Game');
 const Community = require('../models/Community');
@@ -196,6 +197,16 @@ router.get('/', optionalAuth, async (req, res, next) => {
       for (const item of items) {
         item.liked = likedSet.has(String(item._id));
         item.reposted = repostedSet.has(String(item._id));
+      }
+
+      // Posts shared to a community are voted on like a subreddit post.
+      const communityIds = items
+        .filter((item) => (item.destinations || []).some((destination) => destination.type === 'community'))
+        .map((item) => item._id);
+      if (communityIds.length) {
+        const votes = await Vote.find({ user: req.user._id, post: { $in: communityIds } }).select('post value').lean();
+        const byPost = new Map(votes.map((vote) => [String(vote.post), vote.value]));
+        for (const item of items) item.myVote = byPost.get(String(item._id)) || 0;
       }
     }
 

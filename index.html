@@ -37,6 +37,9 @@
     <link rel="stylesheet" href="/css/arcadia-clean.css" />
     <link rel="stylesheet" href="/css/arcadia-games.css" />
     <link rel="stylesheet" href="/css/arcadia-communities.css" />
+    <link rel="stylesheet" href="/css/presence.css" />
+    <link rel="stylesheet" href="/css/trending.css" />
+    <link rel="stylesheet" href="/css/arcadia-share.css" />
     <script type="module" src="/js/main.js"></script>
   </head>
   <body>
@@ -130,7 +133,7 @@
             <div class="post-list" id="post-list" aria-live="polite"></div>
           </section>
           <aside class="sidebar">
-            <section class="mini-panel glass-panel"><div class="mini-panel__head"><h2>Playing now</h2></div><div class="empty-mini"><img src="/assets/arcadia/empty-states/empty-friends.svg" alt=""/><p>No friends are playing right now.</p><button type="button" data-view-link="friends">Find friends</button></div></section><section class="mini-panel glass-panel"><div class="mini-panel__head"><h2>Trending in your circle</h2></div><div class="empty-mini"><img src="/assets/arcadia/empty-states/empty-games.svg" alt=""/><p>Games your circle is playing will show up here.</p><button type="button" data-view-link="games">Explore games</button></div></section>
+            <section class="mini-panel glass-panel" id="online-panel" aria-label="Friends online"></section><section class="mini-panel glass-panel" id="trending-games" aria-label="Trending games"></section>
           </aside>
         </div>
       </section>
