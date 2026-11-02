@@ -44,11 +44,14 @@ export function createFeedExtras({ api, toast, getUser }) {
   function decorate(article, post) {
     const header = article.querySelector('.post-card__head');
     const reason = post.feed?.reason;
-    if (reason?.label && header) {
-      const tag = document.createElement('p');
+    const context = article.querySelector('.pc-context');
+    // Only reasons that tell the player something. "Something new" and "seen before" are noise.
+    if (reason?.label && context && !['discover', 'again'].includes(reason.type)) {
+      const tag = document.createElement('span');
       tag.className = `feed-reason feed-reason--${reason.type}`;
       tag.textContent = reason.label;
-      header.after(tag);
+      context.append(tag);
+      context.hidden = false;
     }
 
     const me = getUser();

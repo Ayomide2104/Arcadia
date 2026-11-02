@@ -5,22 +5,36 @@ import { createGames } from './games.js';
 import { createCommunities } from './communities.js';
 import { createSeenTracker } from './seen.js';
 import { createFeedExtras } from './feedExtras.js';
+import { createComposer } from './composer.js';
+import { openLightbox } from './lightbox.js';
+import { createCircleStrip } from './circle.js';
 import { createNotifications } from './notifications.js';
 
 let notifications = null;
 
 // Records which posts a player has actually looked at, so the feed never repeats them.
 const seenTracker = createSeenTracker({ api: (path, options) => api(path, options), isSignedIn: () => Boolean(currentUser) });
+const composer = createComposer({
+  api: (path, options) => api(path, options),
+  toast: (message) => toast(message),
+  getUser: () => currentUser,
+  openAuth: (reason) => openAuth(reason),
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  onPosted: (post) => showNewPost(post),
+});
+const circle = createCircleStrip({
+  api: (path, options) => api(path, options),
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  onOpen: (post, trigger) => openComments(post, trigger),
+});
 const feedExtras = createFeedExtras({ api: (path, options) => api(path, options), toast: (message) => toast(message), getUser: () => currentUser });
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
-const composerDialog = $('#composer-dialog');
 const authForm = $('#auth-form');
 let authMode = 'login';
 let currentUser = null;
 let returnTo = null;
-let destinationChoicesLoaded = false;
 let csrfToken = null;
 let messaging = null;
 
@@ -40,7 +54,6 @@ function syncMessagingSession() {
   messaging.disconnect();
 }
 }
-let selectedCommunity = null;
 
 function applyTheme(theme, persist = true) {
   const selected = theme === 'dark' ? 'dark' : 'light';
@@ -161,160 +174,15 @@ $('#auth-open').addEventListener('click', async () => {
   updateSignedInUI();
   toast('You’re signed out.');
 });
-$$('[data-action="compose"]').forEach((button) => button.addEventListener('click', () => { if (!currentUser) return openAuth('compose'); composePost(); if (button.textContent.trim() === 'Photo') photoInput.click(); }));
+$$('[data-action="compose"]').forEach((button) => button.addEventListener('click', () => {
+  if (!currentUser) return openAuth('compose');
+  const label = button.textContent.trim();
+  composer.open({ photo: label === 'Photo', pickDestination: label === 'Add game' });
+}));
 
 $('.dialog-close').addEventListener('click', () => dialog.close());
 $('#auth-close')?.addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
-$('.dialog-close', composerDialog).addEventListener('click', () => composerDialog.close());
-composerDialog.addEventListener('click', (event) => { if (event.target === composerDialog) composerDialog.close(); });
-$('#composer-body').addEventListener('input', (event) => { $('#composer-count').textContent = `${event.target.value.length} / 500`; });
-const photoInput = $('#composer-photo');
-$('#photo-pick').addEventListener('click', () => photoInput.click());
-let photoUrl = null;
-photoInput.addEventListener('change', async () => {
-  const file = photoInput.files?.[0];
-  if (!file) return;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas'); canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
-    let quality = 0.86; let blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
-    while (blob && blob.size > 250 * 1024 && quality > 0.35) { quality -= 0.08; blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality)); }
-    if (!blob || blob.size > 250 * 1024) throw new Error('This image could not be compressed below 250 KB.');
-    if (photoUrl) URL.revokeObjectURL(photoUrl);
-    photoUrl = URL.createObjectURL(blob);
-    const preview = $('#photo-preview'); preview.hidden = false; preview.replaceChildren();
-    const img = document.createElement('img'); img.src = photoUrl; img.alt = 'Selected photo preview';
-    const info = document.createElement('span'); info.textContent = `${Math.max(1, Math.round(blob.size / 1024))} KB of 300 KB limit`;
-    const meter = document.createElement('progress'); meter.className = 'photo-meter'; meter.max = 300; meter.value = blob.size / 1024; meter.setAttribute('aria-label', 'Compressed photo size out of 300 KB');
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'icon-button'; remove.setAttribute('aria-label', 'Remove selected photo'); remove.textContent = '×';
-    remove.addEventListener('click', () => { URL.revokeObjectURL(photoUrl); photoUrl = null; photoInput.value = ''; preview.hidden = true; preview.replaceChildren(); });
-    preview.append(img, info, meter, remove);
-  } catch (error) { toast(error.message || 'Could not read that image.'); photoInput.value = ''; }
-});
-$('#composer-game').addEventListener('click', () => { composePost(); $('#composer-destination')?.focus(); });
-$('#composer-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-
-  const body = $('#composer-body').value.trim();
-  const choice = $('#composer-destination')?.value || 'general';
-  const [type, target] = choice.split(':');
-  const submit = $('button[type="submit"]', event.currentTarget);
-
-  // Get the selected image from the photo picker.
-  const photoInput = $('#composer-photo');
-  const photo = photoInput?.files?.[0] || null;
-
-  // Allow text-only, photo-only, and combined posts.
-  if (!body && !photo) {
-    $('#composer-error').textContent = 'Write something or add a photo.';
-    return;
-  }
-
-  if (body.length > 500) {
-    $('#composer-error').textContent =
-      'Post text cannot exceed 500 characters.';
-    return;
-  }
-
-  submit.disabled = true;
-  $('#composer-error').textContent = '';
-
-  const communitySlug = selectedCommunity?.slug;
-
-  const pending = renderPost({
-    _id: `pending-${Date.now()}`,
-    author: currentUser,
-    body,
-    media: [],
-    createdAt: new Date().toISOString(),
-    likeCount: 0,
-    commentCount: 0,
-    repostCount: 0,
-  });
-
-  pending.classList.add('is-pending');
-  pending.querySelectorAll('button').forEach((button) => {
-    button.disabled = true;
-  });
-
-  const host = communitySlug
-    ? $('#view-groups .post-list')
-    : $('#post-list');
-
-  host?.prepend(pending);
-
-  try {
-    // Prepare the post payload.
-    const formData = new FormData();
-
-    formData.append('body', body);
-
-    formData.append(
-      'destinations',
-      JSON.stringify([
-        {
-          type: communitySlug ? 'community' : type,
-          ...(
-            communitySlug
-              ? { target: communitySlug }
-              : target
-                ? { target }
-                : {}
-          ),
-        },
-      ])
-    );
-
-    if (photo) {
-      formData.append('photo', photo);
-    }
-
-    // Send the image and post details as multipart/form-data.
-    // The browser automatically sets the multipart boundary.
-    await api('/posts', {
-      method: 'POST',
-      body: formData,
-    });
-
-    composerDialog.close();
-
-    event.currentTarget.reset();
-
-    $('#composer-count').textContent = '0 / 500';
-
-    // Clear any temporary photo preview if the existing UI uses one.
-    if (typeof photoUrl !== 'undefined' && photoUrl) {
-      URL.revokeObjectURL(photoUrl);
-      photoUrl = null;
-    }
-
-    const photoPreview = $('#photo-preview');
-
-    if (photoPreview) {
-      photoPreview.replaceChildren();
-      photoPreview.hidden = true;
-    }
-
-    toast('Your post is live.');
-
-    if (communitySlug) {
-      await openCommunity(communitySlug);
-    } else {
-      await loadFeed();
-    }
-  } catch (error) {
-    pending.remove();
-
-    $('#composer-error').textContent =
-      error.message || 'Could not publish your post. Please try again.';
-  } finally {
-    submit.disabled = false;
-  }
-});
-
 $$('[data-auth-mode]').forEach((button) =>
   button.addEventListener('click', () =>
     setAuthMode(button.dataset.authMode)
@@ -496,6 +364,7 @@ async function loadFeed(filter = activeFeed, cursor = null) {
   const isInitialLoad = !cursor;
 
   if (isInitialLoad) {
+    void circle.show(filter);
     feedGeneration++;
     feedCursor = null;
 
@@ -654,178 +523,199 @@ function iconSvg(name) {
   return svg;
 }
 
+function relativeAge(date) {
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (Number.isNaN(seconds)) return '';
+  if (seconds < 60) return 'now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) });
+}
+
+function prettySlug(slug) {
+  return String(slug).split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+// Plain text with links, @mentions and #tags picked out. Built from DOM nodes, never HTML.
+function richText(text, onMention) {
+  const fragment = document.createDocumentFragment();
+  const pattern = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])|(@[a-z0-9_]{3,24})|(#[\p{L}\p{N}_]{2,30})/giu;
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > last) fragment.append(text.slice(last, match.index));
+    if (match[1]) {
+      const link = document.createElement('a');
+      link.href = match[1];
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer nofollow';
+      link.className = 'pc-link';
+      link.textContent = match[1].replace(/^https?:\/\/(www\.)?/i, '').slice(0, 48) + (match[1].length > 58 ? '…' : '');
+      fragment.append(link);
+    } else if (match[2]) {
+      const mention = document.createElement('button');
+      mention.type = 'button';
+      mention.className = 'pc-mention';
+      mention.textContent = match[2];
+      mention.addEventListener('click', () => onMention?.(match[2].slice(1).toLowerCase()));
+      fragment.append(mention);
+    } else {
+      const tag = document.createElement('span');
+      tag.className = 'pc-tag';
+      tag.textContent = match[3];
+      fragment.append(tag);
+    }
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) fragment.append(text.slice(last));
+  return fragment;
+}
+
 function renderPost(post) {
   const article = document.createElement('article');
-  article.className = 'post-card glass-panel';
+  article.className = 'post-card glass-panel pc';
   article.id = `post-${post._id}`;
   article.dataset.postId = post._id;
 
-  // Post header
-  const header = document.createElement('div');
-  header.className = 'post-card__head';
+  // Post header: avatar, name · handle · time, and one quiet line for where it was shared.
+  const authorName = post.author?.displayName || post.author?.username || 'Player';
+  const openAuthor = () => { selectView('profile'); void renderProfile(post.author?.username); };
 
-  const avatar = document.createElement('span');
-  avatar.className = 'avatar post-avatar';
-  avatar.textContent = (
-    post.author?.displayName ||
-    post.author?.username ||
-    '?'
-  )[0].toUpperCase();
+  const header = document.createElement('header');
+  header.className = 'post-card__head pc-head';
 
+  const avatar = document.createElement('button');
+  avatar.type = 'button';
+  avatar.className = 'avatar post-avatar pc-avatar';
+  avatar.setAttribute('aria-label', `Open ${authorName}’s profile`);
+  avatar.textContent = authorName[0].toUpperCase();
   setAvatar(avatar, post.author?.avatar, avatar.textContent);
+  avatar.addEventListener('click', openAuthor);
 
   const meta = document.createElement('div');
-  meta.className = 'post-meta';
+  meta.className = 'post-meta pc-who';
 
-  const name = document.createElement('strong');
-  name.textContent =
-    post.author?.displayName ||
-    post.author?.username ||
-    'Player';
+  const line = document.createElement('div');
+  line.className = 'pc-line';
 
-  name.tabIndex = 0;
-  name.setAttribute('role', 'link');
-
-  name.addEventListener('click', () => {
-    selectView('profile');
-    void renderProfile(post.author?.username);
-  });
-
-  name.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      name.click();
-    }
-  });
+  const name = document.createElement('button');
+  name.type = 'button';
+  name.className = 'pc-name';
+  name.textContent = authorName;
+  name.addEventListener('click', openAuthor);
 
   const handle = document.createElement('span');
+  handle.className = 'pc-handle';
+  handle.textContent = `@${post.author?.username || 'player'}`;
 
-  
-const postDate = new Date(post.createdAt);
-const elapsedSeconds = Math.max(
-  0,
-  Math.floor((Date.now() - postDate.getTime()) / 1000)
-);
+  const postDate = new Date(post.createdAt);
+  const time = document.createElement('time');
+  time.className = 'pc-time';
+  time.dateTime = Number.isNaN(postDate.getTime()) ? '' : postDate.toISOString();
+  time.textContent = relativeAge(postDate);
+  time.title = postDate.toLocaleString();
 
-let relativeTime;
+  const dot = document.createElement('span');
+  dot.className = 'pc-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  dot.textContent = '·';
 
-if (elapsedSeconds < 60) {
-  relativeTime = 'Just now';
-} else if (elapsedSeconds < 3600) {
-  relativeTime = `${Math.floor(elapsedSeconds / 60)}m`;
-} else if (elapsedSeconds < 86400) {
-  relativeTime = `${Math.floor(elapsedSeconds / 3600)}h`;
-} else if (elapsedSeconds < 604800) {
-  relativeTime = `${Math.floor(elapsedSeconds / 86400)}d`;
-} else if (elapsedSeconds < 2592000) {
-  relativeTime = `${Math.floor(elapsedSeconds / 604800)}w`;
-} else if (elapsedSeconds < 31536000) {
-  relativeTime = `${Math.floor(elapsedSeconds / 2592000)}mo`;
-} else {
-  relativeTime = `${Math.floor(elapsedSeconds / 31536000)}y`;
-}
+  line.append(name, handle, dot, time);
 
-handle.textContent =
-  `@${post.author?.username || 'player'} · ${relativeTime}`;
+  // Where it was shared: one small chip per game or community.
+  const context = document.createElement('div');
+  context.className = 'pc-context';
+  const places = (post.destinations || []).filter((d) => (d.type === 'game' || d.type === 'community') && d.target);
+  places.slice(0, 2).forEach((destination) => {
+    const chip = document.createElement('span');
+    chip.className = `pc-chip pc-chip--${destination.type}`;
+    chip.textContent = post.labels?.[`${destination.type}:${destination.target}`] || prettySlug(destination.target);
+    context.append(chip);
+  });
+  if (places.length > 2) {
+    const more = document.createElement('span');
+    more.className = 'pc-chip pc-chip--more';
+    more.textContent = `+${places.length - 2}`;
+    context.append(more);
+  }
+  if (!context.children.length) context.hidden = true;
 
-handle.title = postDate.toLocaleString();
-
-
-  meta.append(name, handle);
+  meta.append(line, context);
   header.append(avatar, meta);
 
-  // Game and community destination tags
-  for (const destination of post.destinations || []) {
-    if (
-      destination.type === 'game' ||
-      destination.type === 'community'
-    ) {
-      const tag = document.createElement('span');
-
-      tag.className =
-        destination.type === 'game'
-          ? 'game-pill'
-          : 'community-pill';
-
-      tag.textContent =
-        `${destination.type === 'game' ? 'Game' : 'Group'} · ` +
-        destination.target;
-
-      header.append(tag);
-    }
-  }
-
-  // Post text
+  // Post text: links, @mentions and #tags are picked out; long posts fold up.
   let body = null;
 
   if (typeof post.body === 'string' && post.body.trim()) {
-    body = document.createElement('p');
-    body.className = 'post-card__body';
-    body.textContent = post.body;
+    body = document.createElement('div');
+    body.className = 'pc-text';
+    const paragraph = document.createElement('p');
+    paragraph.className = 'post-card__body pc-body';
+    paragraph.append(richText(post.body.trim(), (username) => { selectView('profile'); void renderProfile(username); }));
+    body.append(paragraph);
+
+    const long = post.body.length > 320 || post.body.split('\n').length > 6;
+    if (long) {
+      paragraph.classList.add('is-clamped');
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'pc-more-text';
+      toggle.textContent = 'Show more';
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.addEventListener('click', () => {
+        const open = paragraph.classList.toggle('is-clamped') === false;
+        toggle.textContent = open ? 'Show less' : 'Show more';
+        toggle.setAttribute('aria-expanded', String(open));
+      });
+      body.append(toggle);
+    }
   }
 
-  // Uploaded images
+  // Photos: a tidy grid; tap one to open the viewer.
   let mediaGallery = null;
 
   const images = Array.isArray(post.media)
-    ? post.media.filter(
-        (item) =>
-          item &&
-          item.type === 'image' &&
-          typeof item.url === 'string' &&
-          /^https:\/\//i.test(item.url)
-      )
+    ? post.media.filter((item) => item && item.type === 'image' && typeof item.url === 'string' && /^https:\/\//i.test(item.url))
     : [];
 
   if (images.length) {
     mediaGallery = document.createElement('div');
-    mediaGallery.className = 'post-media';
+    mediaGallery.className = 'post-media pc-media';
+    mediaGallery.dataset.count = String(Math.min(images.length, 4));
 
-    if (images.length > 1) {
-      mediaGallery.classList.add('post-media--multiple');
+    const first = images[0];
+    if (images.length === 1 && Number.isFinite(first.width) && first.width > 0 && Number.isFinite(first.height) && first.height > 0) {
+      mediaGallery.style.setProperty('--ar', String(Math.min(2, Math.max(0.8, first.width / first.height))));
     }
 
-    images.forEach((image, index) => {
-      const imageLink = document.createElement('a');
+    const viewable = images.map((image, i) => ({
+      url: image.url,
+      alt: post.body?.trim() ? `Photo ${i + 1} from ${authorName}: ${post.body.trim().slice(0, 100)}` : `Photo ${i + 1} from ${authorName}`,
+    }));
 
-      imageLink.className = 'post-media__item';
-      imageLink.href = image.url;
-      imageLink.target = '_blank';
-      imageLink.rel = 'noopener noreferrer';
-      imageLink.setAttribute(
-        'aria-label',
-        `Open post image ${index + 1} in a new tab`
-      );
+    images.slice(0, 4).forEach((image, index) => {
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'pc-photo';
+      tile.setAttribute('aria-label', `View photo ${index + 1} of ${images.length}`);
 
       const img = document.createElement('img');
-
-      img.className = 'post-media__image';
       img.src = image.url;
-      img.alt =
-        post.body?.trim()
-          ? `Image attached to post: ${post.body.trim().slice(0, 120)}`
-          : `Image attached to post by ${post.author?.displayName || post.author?.username || 'Player'}`;
-
+      img.alt = viewable[index].alt;
       img.loading = 'lazy';
       img.decoding = 'async';
+      img.addEventListener('error', () => { tile.classList.add('is-broken'); img.alt = 'Photo unavailable'; }, { once: true });
+      tile.append(img);
 
-      if (
-        Number.isFinite(image.width) &&
-        image.width > 0 &&
-        Number.isFinite(image.height) &&
-        image.height > 0
-      ) {
-        img.width = image.width;
-        img.height = image.height;
+      if (index === 3 && images.length > 4) {
+        const rest = document.createElement('span');
+        rest.className = 'pc-photo-more';
+        rest.textContent = `+${images.length - 4}`;
+        tile.append(rest);
       }
 
-      img.addEventListener('error', () => {
-        imageLink.classList.add('post-media__item--error');
-        img.alt = 'Image unavailable';
-      }, { once: true });
-
-      imageLink.append(img);
-      mediaGallery.append(imageLink);
+      tile.addEventListener('click', () => openLightbox(viewable, index));
+      mediaGallery.append(tile);
     });
   }
 
@@ -1098,6 +988,8 @@ handle.title = postDate.toLocaleString();
     }
   });
 
+  actions.className = 'post-actions pc-actions';
+  shareButton.classList.add('pc-share');
   actions.append(
     likeButton,
     commentButton,
@@ -2254,10 +2146,14 @@ async function renderProfile(username = currentUser?.username, initialTab = 'pos
     const isSelf = currentUser?.username === user.username;
     const games = (user.favoriteGames || []).map(pfGameName);
 
-    const cover = uiEl('div', 'pf-cover'); cover.style.backgroundImage = `url(${pfCover(user.username)})`; cover.setAttribute('aria-hidden', 'true');
+    const cover = uiEl('div', 'pf-cover'); cover.style.backgroundImage = `url(${pfCover(user.username)})`;
+    if (isSelf) { const editCover = uiEl('button', 'pf-cover-edit', user.banner ? 'Change cover' : 'Add cover'); editCover.type = 'button'; editCover.addEventListener('click', () => openEditProfile(user)); cover.append(editCover); }
     const bannerGame = games[0];
 
-if (bannerGame) {
+if (user.banner && /^https:\/\//i.test(user.banner)) {
+  cover.style.backgroundImage = `url("${user.banner}")`;
+  cover.classList.add('has-banner');
+} else if (bannerGame) {
   const gameInfo = getArcadiaGame(bannerGame);
 
   if (gameInfo.banner) {
@@ -2676,7 +2572,44 @@ function openEditProfile(user) {
     } catch (e) { photoMessage(e.message || 'Could not remove the photo.', true); }
     finally { choosePhoto.disabled = removePhoto.disabled = false; }
   });
-  body.append(photoField, nameField, bioField, gamesRow);
+  // Cover banner: upload, replace or remove. Saved straight away, like the photo.
+  const bannerField = uiEl('div', 'field banner-edit');
+  const bannerPreview = uiEl('div', 'banner-edit__preview'); bannerPreview.setAttribute('aria-hidden', 'true');
+  const paintBanner = (url) => { bannerPreview.style.backgroundImage = `url("${url && /^https:\/\//i.test(url) ? url : pfCover(user.username)}")`; bannerPreview.classList.toggle('has-banner', Boolean(url)); };
+  paintBanner(user.banner);
+  const bannerButtons = uiEl('div', 'avatar-edit__buttons');
+  const bannerFile = document.createElement('input'); bannerFile.type = 'file'; bannerFile.accept = 'image/jpeg,image/png,image/webp,image/gif'; bannerFile.hidden = true;
+  const chooseBanner = uiEl('button', 'button', user.banner ? 'Change cover' : 'Upload cover'); chooseBanner.type = 'button';
+  const removeBanner = uiEl('button', 'button', 'Remove cover'); removeBanner.type = 'button'; removeBanner.hidden = !user.banner;
+  const bannerStatus = uiEl('p', 'avatar-edit__status', 'Wide images work best. We crop it to fit.'); bannerStatus.setAttribute('role', 'status');
+  bannerButtons.append(chooseBanner, removeBanner);
+  bannerField.append(uiEl('label', 'st-label', 'Cover banner'), bannerPreview, bannerButtons, bannerStatus, bannerFile);
+  const setBannerState = (url) => {
+    currentUser = { ...currentUser, banner: url || null }; user.banner = url || null;
+    paintBanner(url); chooseBanner.textContent = url ? 'Change cover' : 'Upload cover'; removeBanner.hidden = !url; photoChanged = true;
+  };
+  const bannerMessage = (text, isError = false) => { bannerStatus.textContent = text; bannerStatus.classList.toggle('is-error', isError); };
+  chooseBanner.addEventListener('click', () => bannerFile.click());
+  bannerFile.addEventListener('change', async () => {
+    const file = bannerFile.files?.[0]; bannerFile.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) { bannerMessage('Choose a JPEG, PNG, WebP or GIF image.', true); return; }
+    chooseBanner.disabled = removeBanner.disabled = true; bannerMessage('Uploading…');
+    try {
+      const prepared = await prepareBannerFile(file);
+      const formData = new FormData(); formData.append('photo', prepared);
+      const result = await api('/auth/banner', { method: 'POST', body: formData });
+      setBannerState(result.user.banner); bannerMessage('Cover updated.');
+    } catch (e) { bannerMessage(e.message || 'Could not upload that cover.', true); }
+    finally { chooseBanner.disabled = removeBanner.disabled = false; }
+  });
+  removeBanner.addEventListener('click', async () => {
+    chooseBanner.disabled = removeBanner.disabled = true; bannerMessage('Removing…');
+    try { await api('/auth/profile', { method: 'PATCH', body: JSON.stringify({ banner: null }) }); setBannerState(null); bannerMessage('Cover removed.'); }
+    catch (e) { bannerMessage(e.message || 'Could not remove the cover.', true); }
+    finally { chooseBanner.disabled = removeBanner.disabled = false; }
+  });
+  body.append(bannerField, photoField, nameField, bioField, gamesRow);
 
   const foot = uiEl('div', 'sheet-foot');
   const cancel = uiEl('button', 'button', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
@@ -2693,6 +2626,27 @@ function openEditProfile(user) {
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener('close', () => { dialog.remove(); if (photoChanged) void renderProfile(); });
   document.body.append(dialog); dialog.showModal(); name.focus();
+}
+
+// Crop to the banner shape (8:3) in the browser so uploads stay small and look right.
+async function prepareBannerFile(file) {
+  let bitmap;
+  try { bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch { throw new Error('That image could not be read. Try another one.'); }
+  const width = Math.min(1600, bitmap.width);
+  const height = Math.round(width * 3 / 8);
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+  const ratio = 8 / 3;
+  let sw = bitmap.width; let sh = Math.round(sw / ratio);
+  if (sh > bitmap.height) { sh = bitmap.height; sw = Math.round(sh * ratio); }
+  const sx = Math.round((bitmap.width - sw) / 2); const sy = Math.round((bitmap.height - sh) / 2);
+  canvas.getContext('2d').drawImage(bitmap, sx, sy, sw, sh, 0, 0, width, height); bitmap.close?.();
+  const toBlob = (type, q) => new Promise((resolve) => canvas.toBlob(resolve, type, q));
+  let type = 'image/webp'; let quality = 0.86; let blob = await toBlob(type, quality);
+  if (!blob || blob.type !== 'image/webp') { type = 'image/jpeg'; blob = await toBlob(type, quality); }
+  while (blob && blob.size > 700 * 1024 && quality > 0.5) { quality -= 0.08; blob = await toBlob(type, quality); }
+  if (!blob || blob.size > 4 * 1024 * 1024) throw new Error('That image is too large to use as a cover.');
+  return new File([blob], `banner.${type === 'image/webp' ? 'webp' : 'jpg'}`, { type });
 }
 
 function stCard(title) { const card = uiEl('section', 'st-card'); if (title) card.append(uiEl('h2', '', title)); return card; }
@@ -2894,27 +2848,20 @@ async function renderSettings(host) {
   page.append(security);
 }
 
-function composePost() {
-  if (!currentUser) return openAuth('compose');
-  $('#composer-error').textContent = '';
-  if (!destinationChoicesLoaded) {
-    const form=$('#composer-form');
-    const label=document.createElement('label');label.htmlFor='composer-destination';label.textContent='Share to';
-    const select=document.createElement('select');select.id='composer-destination';select.setAttribute('aria-label','Post destination');
-    const addOption=(value,text)=>{const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);};
-    addOption('general','Public feed');
-    form.insertBefore(label,$('#composer-body'));form.insertBefore(select,$('#composer-body'));
-    destinationChoicesLoaded=true;
-    Promise.allSettled([api('/games?limit=100'),api('/communities/mine')]).then(([games,mine])=>{
-      for(const item of (games.status==='fulfilled'?games.value.items:[]))addOption(`game:${item.slug}`,`Game · ${item.name}`);
-      for(const item of (mine.status==='fulfilled'?mine.value.items:[]))addOption(`community:${item.slug}`,`Group · ${item.name}`);
-    });
-  }
-  const destination=$('#composer-destination');if(destination){destination.hidden=Boolean(selectedCommunity);destination.previousElementSibling.hidden=Boolean(selectedCommunity);if(selectedCommunity)destination.value=`community:${selectedCommunity.slug}`;}
-  $('#composer-title').textContent=selectedCommunity?`Post in ${selectedCommunity.name}`:'What’s the play?';
-  composerDialog.showModal();
-  $('#composer-body').focus();
+// A post you just published goes straight to the top of your feed, no reload needed.
+function showNewPost(post) {
+  if (!post) { void loadFeed(); return; }
+  const list = $('#post-list');
+  if (!list || activeFeed === 'groups' || $('#view-feed')?.hidden) return;
+  const node = renderPost(post);
+  node.classList.add('is-new');
+  list.prepend(node);
+  const state = $('#feed-state');
+  if (state) state.hidden = true;
+  node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
+
+function composePost() { composer.open(); }
 
 $$('[data-action="compose"]').forEach((button) => button.setAttribute('aria-label', 'Write a post'));
 restoreSession();

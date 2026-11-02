@@ -7,6 +7,9 @@ const PUBLIC = { destinations: { $elemMatch: { type: 'general' } } };
 const PUBLIC_OR_GAME = { destinations: { $elemMatch: { type: { $in: ['general', 'game'] } } } };
 const POOL = 60;
 const RECENTLY_SERVED_MS = 2 * 60 * 60 * 1000;
+// A post that was handed out but never looked at becomes eligible again after this.
+const SERVED_HOLD_MS = 15 * 60 * 1000;
+const CIRCLE_WINDOW_MS = 4 * DAY;
 
 /**
  * Builds one page of a player's feed.
@@ -21,7 +24,7 @@ const RECENTLY_SERVED_MS = 2 * 60 * 60 * 1000;
  *     (least recently seen first) and mark where the "caught up" line goes.
  */
 function createFeedEngine(models) {
-  const { Post, SeenPost, FeedServed, FeedHide, UserInterest, Membership, Community, Game, getFriendIds } = models;
+  const { Post, SeenPost, FeedServed, FeedHide, UserInterest, Membership, Community, Game, getFriendIds, Reaction, Repost, Comment, User } = models;
 
   async function loadState(user) {
     const empty = { friendIds: [], learned: null, hiddenPosts: new Set(), mutedAuthors: [], memberSlugs: [], seenAt: new Map(), servedAt: new Map() };
@@ -104,10 +107,161 @@ function createFeedEngine(models) {
     return buckets;
   }
 
+  // Human names for the games and communities a post was shared to.
+  async function attachLabels(posts) {
+    const games = new Set(); const groups = new Set();
+    for (const post of posts) {
+      for (const d of post.destinations || []) {
+        if (d.type === 'game' && d.target) games.add(d.target);
+        if (d.type === 'community' && d.target) groups.add(d.target);
+      }
+    }
+    const [gameRows, groupRows] = await Promise.all([
+      games.size ? Game.find({ slug: { $in: [...games] } }).select('slug name').lean() : [],
+      groups.size ? Community.find({ slug: { $in: [...groups] } }).select('slug name').lean() : []
+    ]);
+    const labels = {};
+    for (const row of gameRows) labels[`game:${row.slug}`] = row.name;
+    for (const row of groupRows) labels[`community:${row.slug}`] = row.name;
+    for (const post of posts) post.labels = labels;
+  }
+
+  async function friendsTimeline({ user, state, limit, n, b, now }) {
+    const clauses = [{ removedAt: null }, { author: { $in: state.friendIds } }, PUBLIC_OR_GAME];
+    if (state.mutedAuthors.length) clauses.push({ author: { $nin: state.mutedAuthors } });
+    const hidden = [...state.hiddenPosts];
+    if (hidden.length) clauses.push({ _id: { $nin: hidden } });
+    if (b) clauses.push({ _id: { $lt: b } });
+    const posts = state.friendIds.length
+      ? await Post.find({ $and: clauses }).sort({ _id: -1 }).limit(limit).lean()
+      : [];
+    if (posts.length) await Post.populate(posts, { path: 'author', select: 'username displayName avatar' });
+    await attachLabels(posts);
+    for (const post of posts) post.feed = { source: 'friends', reason: { type: 'friend', label: 'From your friend' } };
+    if (posts.length) {
+      await FeedServed.bulkWrite(posts.map((item) => ({
+        updateOne: { filter: { user: user._id, post: item._id }, update: { $set: { servedAt: new Date(now) }, $setOnInsert: { user: user._id, post: item._id } }, upsert: true }
+      })), { ordered: false }).catch(() => {});
+    }
+    return {
+      items: posts,
+      caughtUp: false,
+      nextCursor: posts.length >= limit ? encodeCursor({ n: n + 1, ex: [], b: String(posts.at(-1)._id) }) : null
+    };
+  }
+
+  /**
+   * "Trending in your circle": what your friends and communities are reacting to
+   * right now. Friends' likes, reposts and comments count most, then posts by
+   * friends, then posts in your communities, then plain momentum.
+   */
+  async function trendingInCircle({ user = null, limit = 6 }) {
+    const now = Date.now();
+    const since = new Date(now - CIRCLE_WINDOW_MS);
+    const state = await loadState(user);
+    const friendSet = new Set(state.friendIds);
+    const mine = user ? String(user._id) : null;
+
+    const [likes, reposts, comments] = state.friendIds.length
+      ? await Promise.all([
+          Reaction.find({ user: { $in: state.friendIds }, createdAt: { $gte: since } }).select('user post').lean(),
+          Repost.find({ user: { $in: state.friendIds }, createdAt: { $gte: since } }).select('user post').lean(),
+          Comment.find({ author: { $in: state.friendIds }, createdAt: { $gte: since } }).select('author post').lean()
+        ])
+      : [[], [], []];
+
+    const activity = new Map(); // postId -> { likes:Set, reposts:Set, comments:Set }
+    const touch = (postId, kind, who) => {
+      const id = String(postId);
+      if (!activity.has(id)) activity.set(id, { likes: new Set(), reposts: new Set(), comments: new Set() });
+      activity.get(id)[kind].add(String(who));
+    };
+    for (const row of likes) touch(row.post, 'likes', row.user);
+    for (const row of reposts) touch(row.post, 'reposts', row.user);
+    for (const row of comments) touch(row.post, 'comments', row.author);
+
+    const visible = { removedAt: null, destinations: { $elemMatch: { type: { $in: ['general', 'game'] } } } };
+    const clauses = [{ removedAt: null }];
+    if (state.mutedAuthors.length) clauses.push({ author: { $nin: state.mutedAuthors } });
+    if (state.hiddenPosts.size) clauses.push({ _id: { $nin: [...state.hiddenPosts] } });
+    const find = (extra, sort = { createdAt: -1, _id: -1 }, cap = 60) =>
+      Post.find({ $and: [...clauses, extra] }).sort(sort).limit(cap).lean();
+
+    const jobs = [
+      find({ ...PUBLIC_OR_GAME, createdAt: { $gte: since } }, { likeCount: -1, commentCount: -1, repostCount: -1, _id: -1 }, 60)
+    ];
+    if (activity.size) jobs.push(find({ _id: { $in: [...activity.keys()] }, ...PUBLIC_OR_GAME }, undefined, 80));
+    if (state.friendIds.length) jobs.push(find({ author: { $in: state.friendIds }, ...PUBLIC_OR_GAME, createdAt: { $gte: since } }, undefined, 40));
+    if (state.memberSlugs.length) jobs.push(find({ destinations: { $elemMatch: { type: 'community', target: { $in: state.memberSlugs } } }, createdAt: { $gte: since } }, undefined, 40));
+
+    const pool = new Map();
+    for (const list of await Promise.all(jobs)) for (const post of list) pool.set(String(post._id), post);
+
+    const scored = [];
+    for (const post of pool.values()) {
+      const id = String(post._id);
+      const author = String(post.author);
+      if (mine && author === mine) continue;
+      const act = activity.get(id);
+      const hours = Math.max(0, (now - new Date(post.createdAt).getTime()) / 3600000);
+      const inCommunity = (post.destinations || []).some((d) => d.type === 'community' && state.memberSlugs.includes(d.target));
+      const friendEngagement = act ? 3 * act.reposts.size + 2 * act.likes.size + 2.5 * act.comments.size : 0;
+      const engagement = (post.likeCount || 0) + 2 * (post.commentCount || 0) + 3 * (post.repostCount || 0);
+      const momentum = Math.min(3, Math.log1p((engagement / Math.pow(hours + 2, 0.75)) * 3));
+      const circle = friendEngagement > 0 || friendSet.has(author) || inCommunity;
+      const score = friendEngagement + (friendSet.has(author) ? 2 : 0) + (inCommunity ? 1 : 0) + momentum + 1.5 * Math.exp(-hours / 36) + (circle ? 0.5 : 0);
+      if (score < 1.2) continue;
+      scored.push({ post, score, act, circle, author, inCommunity });
+    }
+    scored.sort((a, b) => (b.score - a.score) || String(b.post._id).localeCompare(String(a.post._id)));
+
+    // Circle posts first, then fill with general momentum; one post per author.
+    const seenAuthors = new Set(); const top = [];
+    for (const entry of [...scored.filter((e) => e.circle), ...scored.filter((e) => !e.circle)]) {
+      if (seenAuthors.has(entry.author)) continue;
+      seenAuthors.add(entry.author); top.push(entry);
+      if (top.length >= limit) break;
+    }
+
+    const items = top.map((entry) => entry.post);
+    if (items.length) await Post.populate(items, { path: 'author', select: 'username displayName avatar' });
+    await attachLabels(items);
+
+    const whoIds = new Set();
+    for (const entry of top) for (const kind of ['reposts', 'likes', 'comments']) for (const who of entry.act?.[kind] || []) whoIds.add(who);
+    const people = whoIds.size && User ? await User.find({ _id: { $in: [...whoIds] } }).select('username displayName').lean() : [];
+    const nameOf = new Map(people.map((row) => [String(row._id), row.displayName || row.username]));
+
+    top.forEach((entry, index) => {
+      const post = items[index];
+      const act = entry.act;
+      let line = 'Popular right now';
+      let kind = 'popular';
+      if (act && (act.reposts.size || act.likes.size || act.comments.size)) {
+        const verb = act.reposts.size ? 'reposted' : act.comments.size ? 'commented on' : 'liked';
+        const group = act.reposts.size ? act.reposts : act.comments.size ? act.comments : act.likes;
+        const names = [...group].map((id) => nameOf.get(id)).filter(Boolean);
+        const total = new Set([...act.reposts, ...act.likes, ...act.comments]).size;
+        const first = names[0] || 'A friend';
+        line = total > 1 ? `${first} and ${total - 1} ${total - 1 === 1 ? 'friend' : 'friends'} ${verb} this` : `${first} ${verb} this`;
+        kind = 'friends';
+      } else if (friendSet.has(entry.author)) { line = 'From your friend'; kind = 'friend'; }
+      else if (entry.inCommunity) { line = 'Hot in your communities'; kind = 'community'; }
+      post.circle = { kind, line, friends: entry.act ? new Set([...entry.act.reposts, ...entry.act.likes, ...entry.act.comments]).size : 0 };
+    });
+
+    return { items };
+  }
+
   async function buildFeedPage({ user = null, feed = 'for-you', game = null, limit = 20, cursor = null }) {
     const now = Date.now();
-    const { n, ex } = decodeCursor(cursor);
+    const { n, ex, b } = decodeCursor(cursor);
     const state = await loadState(user);
+
+    // Friends: a plain timeline, newest first. It never goes empty just because
+    // you have already scrolled past a post.
+    if (user && feed === 'friends' && !game) return friendsTimeline({ user, state, limit, n, b, now });
+
     const rawProfile = mergeProfile(user || {}, state.learned, now);
     const profile = prepareProfile(rawProfile);
 
@@ -122,7 +276,8 @@ function createFeedEngine(models) {
     const seed = `${user ? user._id : 'guest'}:${Math.floor(now / (30 * 60 * 1000))}`;
 
     // 1) Unseen posts only.
-    const unseenExcluded = new Set([...state.hiddenPosts, ...state.seenAt.keys(), ...state.servedAt.keys(), ...ex]);
+    const heldBack = [...state.servedAt].filter(([, at]) => now - at < SERVED_HOLD_MS).map(([id]) => id);
+    const unseenExcluded = new Set([...state.hiddenPosts, ...state.seenAt.keys(), ...heldBack, ...ex]);
     const fresh = await fetchPool({ feed, game, user, state, interestGames, topAuthors, excluded: [...unseenExcluded], now });
     let buckets = await rank({ posts: fresh, user, state, profile, feed, game, seed, now });
     let picked = mixPage(buckets, quotas, limit);
@@ -131,7 +286,9 @@ function createFeedEngine(models) {
     let recycled = 0;
     if (user && picked.length < limit) {
       const chosen = new Set(picked.map((entry) => String(entry.post._id)));
-      const recent = [...state.servedAt].filter(([, at]) => now - at < RECENTLY_SERVED_MS).map(([id]) => id);
+      // On a fresh load nothing is held back, so a refresh never leaves the feed empty.
+      // While scrolling further, posts handed out a moment ago are skipped to avoid loops.
+      const recent = n > 0 ? [...state.servedAt].filter(([, at]) => now - at < RECENTLY_SERVED_MS).map(([id]) => id) : [];
       const skip = new Set([...state.hiddenPosts, ...ex, ...recent, ...chosen]);
       const again = await fetchPool({ feed, game, user, state, interestGames, topAuthors, excluded: [...skip], now });
       buckets = await rank({ posts: again, user, state, profile, feed, game, seed, now });
@@ -153,6 +310,7 @@ function createFeedEngine(models) {
     // Authors for the page, flags for the client.
     const posts = picked.map((entry) => entry.post);
     if (posts.length) await Post.populate(posts, { path: 'author', select: 'username displayName avatar' });
+    await attachLabels(posts);
     let dividerPlaced = false;
     const items = picked.map((entry) => {
       const item = entry.post;
@@ -181,7 +339,7 @@ function createFeedEngine(models) {
     };
   }
 
-  return { buildFeedPage, hash32 };
+  return { buildFeedPage, trendingInCircle, hash32 };
 }
 
 module.exports = { createFeedEngine };

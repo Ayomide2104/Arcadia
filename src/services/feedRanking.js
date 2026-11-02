@@ -245,14 +245,15 @@ function mixPage(buckets, quotas, limit, { maxPerAuthor = 2 } = {}) {
 function encodeCursor(data) { return Buffer.from(JSON.stringify(data)).toString('base64url'); }
 
 function decodeCursor(text) {
-  if (!text) return { n: 0, ex: [] };
+  if (!text) return { n: 0, ex: [], b: null };
   if (typeof text !== 'string' || text.length > 6000) throw Object.assign(new Error('Invalid pagination cursor.'), { status: 400 });
   try {
     const data = JSON.parse(Buffer.from(text, 'base64url').toString('utf8'));
     const n = Number.isInteger(data?.n) && data.n >= 0 && data.n < 10000 ? data.n : null;
     const ex = Array.isArray(data?.ex) ? data.ex.filter((id) => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id)).slice(0, 150) : [];
+    const b = typeof data?.b === 'string' && /^[a-f\d]{24}$/i.test(data.b) ? data.b : null;
     if (n === null) throw new Error('bad');
-    return { n, ex };
+    return { n, ex, b };
   } catch {
     throw Object.assign(new Error('Invalid pagination cursor.'), { status: 400 });
   }

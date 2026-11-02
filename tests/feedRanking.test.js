@@ -74,19 +74,20 @@ test('mixing falls back to other sources when one is empty', () => {
 
 test('cursor round trip and rejection of junk', () => {
   const token = R.encodeCursor({ n: 3, ex: [hex(1), 'nope'] });
-  assert.deepEqual(R.decodeCursor(token), { n: 3, ex: [hex(1)] });
-  assert.deepEqual(R.decodeCursor(null), { n: 0, ex: [] });
+  assert.deepEqual(R.decodeCursor(token), { n: 3, ex: [hex(1)], b: null });
+  assert.deepEqual(R.decodeCursor(null), { n: 0, ex: [], b: null });
   assert.throws(() => R.decodeCursor('###'), /Invalid/);
 });
 
-function engineWith({ posts, user, seen = [], hides = [], friends = [], learned = null, members = [] }) {
+function engineWith({ posts, user, seen = [], hides = [], friends = [], learned = null, members = [], likes = [], reposts = [], comments = [], people = [] }) {
   const models = {
     Post: fakeModel(posts), SeenPost: fakeModel(seen), FeedServed: fakeModel([]), FeedHide: fakeModel(hides),
     UserInterest: { findOne: () => ({ lean: async () => learned }) },
     Membership: fakeModel(members.map((slug) => ({ user: user?._id, community: `c-${slug}` }))),
     Community: fakeModel(members.map((slug) => ({ _id: `c-${slug}`, slug, active: true }))),
     Game: fakeModel([{ slug: 'efootball', name: 'eFootball', genres: ['sports'], active: true }, { slug: 'valorant', name: 'Valorant', genres: ['fps'], active: true }]),
-    getFriendIds: async () => friends
+    getFriendIds: async () => friends,
+    Reaction: fakeModel(likes), Repost: fakeModel(reposts), Comment: fakeModel(comments), User: fakeModel(people)
   };
   return { engine: createFeedEngine(models), models };
 }
@@ -112,20 +113,89 @@ test('signed-in feed never repeats a post across pages or refreshes until the po
   assert.ok(recycledSeen || pages >= 2);
 });
 
-test('after everything is served, a refresh brings older posts back with a divider', async () => {
+test('a refresh right after loading never leaves the feed empty', async () => {
   const user = { _id: hex(1), favoriteGames: [], genres: [] };
   const posts = Array.from({ length: 8 }, (_, i) => post(i + 10, { h: i + 1 }));
-  const { engine, models } = engineWith({ posts, user });
+  const { engine } = engineWith({ posts, user });
   const first = await engine.buildFeedPage({ user, feed: 'for-you', limit: 20 });
   assert.equal(first.items.length, 8);
   assert.equal(first.caughtUp, false);
-  // Pretend the player read them all a day ago.
-  for (const row of models.FeedServed.rows) row.servedAt = new Date(Date.now() - 24 * 3600000);
   const again = await engine.buildFeedPage({ user, feed: 'for-you', limit: 20 });
+  assert.equal(again.items.length, 8, 'the same posts come back instead of an empty feed');
   assert.equal(again.caughtUp, true);
-  assert.equal(again.items.filter((item) => item.feed.divider).length, 1);
   assert.equal(again.items[0].feed.divider, true);
-  assert.equal(again.items[0].feed.recycled, true);
+  assert.equal(again.items.filter((item) => item.feed.divider).length, 1);
+});
+
+test('posts that were handed out but never looked at return after a while', async () => {
+  const user = { _id: hex(1), favoriteGames: [], genres: [] };
+  const posts = Array.from({ length: 6 }, (_, i) => post(i + 10, { h: i + 1 }));
+  const { engine, models } = engineWith({ posts, user });
+  await engine.buildFeedPage({ user, feed: 'for-you', limit: 20 });
+  for (const row of models.FeedServed.rows) row.servedAt = new Date(Date.now() - 30 * 60000);
+  const later = await engine.buildFeedPage({ user, feed: 'for-you', limit: 20 });
+  assert.equal(later.items.length, 6);
+  assert.equal(later.caughtUp, false, 'never seen, so they are not "seen before"');
+});
+
+test('posts the player has actually seen are held back, then come back under the divider', async () => {
+  const user = { _id: hex(1), favoriteGames: [], genres: [] };
+  const posts = [post(10, { h: 1 }), post(11, { h: 2 }), post(12, { h: 30 })];
+  const seen = [{ user: hex(1), post: hex(10), seenAt: new Date() }, { user: hex(1), post: hex(11), seenAt: new Date() }];
+  const { engine } = engineWith({ posts, user, seen });
+  const page = await engine.buildFeedPage({ user, feed: 'for-you', limit: 20 });
+  assert.equal(String(page.items[0]._id), hex(12), 'the unseen post comes first');
+  assert.equal(page.items.length, 3);
+  assert.equal(page.items[1].feed.divider, true);
+});
+
+test('friends feed is a steady newest-first timeline with paging and never empties on refresh', async () => {
+  const user = { _id: hex(1) };
+  const posts = [10, 11, 12, 13, 14, 15, 16].map((n) => post(n, { a: n % 2 ? 5 : 6, h: 20 - n }));
+  const stranger = post(30, { a: 99 });
+  const { engine } = engineWith({ posts: [...posts, stranger], user, friends: [hex(1005), hex(1006)] });
+  const one = await engine.buildFeedPage({ user, feed: 'friends', limit: 3 });
+  assert.deepEqual(one.items.map((item) => String(item._id)), [hex(16), hex(15), hex(14)]);
+  const two = await engine.buildFeedPage({ user, feed: 'friends', limit: 3, cursor: one.nextCursor });
+  assert.deepEqual(two.items.map((item) => String(item._id)), [hex(13), hex(12), hex(11)]);
+  const refresh = await engine.buildFeedPage({ user, feed: 'friends', limit: 3 });
+  assert.deepEqual(refresh.items.map((item) => String(item._id)), [hex(16), hex(15), hex(14)]);
+  const last = await engine.buildFeedPage({ user, feed: 'friends', limit: 3, cursor: two.nextCursor });
+  assert.deepEqual(last.items.map((item) => String(item._id)), [hex(10)]);
+  assert.equal(last.nextCursor, null);
+});
+
+test('posts carry readable names for the games they were shared to', async () => {
+  const user = { _id: hex(1) };
+  const posts = [post(10, { d: [{ type: 'game', target: 'efootball' }, { type: 'general', target: null }] })];
+  const { engine } = engineWith({ posts, user });
+  const page = await engine.buildFeedPage({ user, feed: 'for-you', limit: 5 });
+  assert.equal(page.items[0].labels['game:efootball'], 'eFootball');
+});
+
+test('trending in your circle puts what friends reacted to first, with a reason', async () => {
+  const user = { _id: hex(1) };
+  const friend = hex(1005); const other = hex(1006);
+  const posts = [post(10, { a: 50, h: 6 }), post(11, { a: 51, h: 6, likes: 3 }), post(12, { a: 52, h: 6 }), { ...post(13, { a: 1, h: 2 }), author: hex(1) }];
+  const people = [{ _id: friend, username: 'ada', displayName: 'Ada' }, { _id: other, username: 'bo', displayName: 'Bo' }];
+  const likes = [{ user: friend, post: hex(10), createdAt: new Date() }, { user: other, post: hex(10), createdAt: new Date() }, { user: friend, post: hex(12), createdAt: new Date() }];
+  const reposts = [{ user: friend, post: hex(12), createdAt: new Date() }];
+  const { engine } = engineWith({ posts, user, friends: [friend, other], likes, reposts, people });
+  const { items } = await engine.trendingInCircle({ user, limit: 5 });
+  assert.ok(items.length >= 2);
+  assert.ok(!items.some((item) => String(item._id) === hex(13)), 'your own posts are left out');
+  assert.equal(String(items[0]._id), hex(12), 'a repost plus a like beats two plain likes');
+  assert.match(items[0].circle.line, /Ada reposted this/);
+  const liked = items.find((item) => String(item._id) === hex(10));
+  assert.match(liked.circle.line, /(Ada|Bo) and 1 friend liked this/);
+});
+
+test('trending falls back to popular posts for guests', async () => {
+  const posts = [post(10, { likes: 30, h: 5 }), post(11, { likes: 0, h: 5 })];
+  const { engine } = engineWith({ posts, user: null });
+  const { items } = await engine.trendingInCircle({ user: null, limit: 5 });
+  assert.equal(String(items[0]._id), hex(10));
+  assert.equal(items[0].circle.kind, 'popular');
 });
 
 test('hidden posts and muted authors never show up, even when recycling', async () => {

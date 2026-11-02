@@ -16,6 +16,7 @@ const User = require('../models/User');
 const SeenPost = require('../models/SeenPost');
 const { getFriendIds } = require('../services/friends');
 const { notify } = require('../services/notifications');
+const { hasImageSignature } = require('../services/media');
 const FeedServed = require('../models/FeedServed');
 const FeedHide = require('../models/FeedHide');
 const UserInterest = require('../models/UserInterest');
@@ -24,6 +25,7 @@ const { recordSignal, recordViews } = require('../services/interests');
 
 const feedEngine = createFeedEngine({
   Post, SeenPost, FeedServed, FeedHide, UserInterest, Membership, Community, Game, getFriendIds,
+  Reaction, Repost, Comment, User,
 });
 
 const router = express.Router();
@@ -206,6 +208,34 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
+// GET /api/posts/trending
+// "Trending in your circle": what friends and communities are reacting to right now.
+router.get('/trending', optionalAuth, async (req, res, next) => {
+  try {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 6, 1), 10);
+    const { items } = await feedEngine.trendingInCircle({ user: req.user || null, limit });
+
+    if (req.user && items.length) {
+      const ids = items.map((post) => post._id);
+      const [liked, reposted] = await Promise.all([
+        Reaction.find({ user: req.user._id, post: { $in: ids } }).distinct('post'),
+        Repost.find({ user: req.user._id, post: { $in: ids } }).distinct('post'),
+      ]);
+      const likedSet = new Set(liked.map(String));
+      const repostedSet = new Set(reposted.map(String));
+
+      for (const item of items) {
+        item.liked = likedSet.has(String(item._id));
+        item.reposted = repostedSet.has(String(item._id));
+      }
+    }
+
+    return res.json({ success: true, data: { items } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // Hide a post, show less like it, or mute its author.
 const limitHide = rateLimit({ name: 'feed-hide', max: 120, windowMs: 15 * 60 * 1000 });
 
@@ -340,11 +370,12 @@ router.post(
   '/',
   requireAuth,
   limitPosts,
-  uploadImage.single('photo'),
+  uploadImage.postPhotos,
   async (req, res, next) => {
-    let uploadedImage = null;
+    let uploadedImages = [];
 
     try {
+      const files = [...(req.files?.photos || []), ...(req.files?.photo || [])].slice(0, uploadImage.MAX_POST_PHOTOS);
       const body =
         typeof req.body?.body === 'string'
           ? req.body.body.trim()
@@ -365,7 +396,7 @@ router.post(
       }
 
       // A post must contain text, an image, or both.
-      if (!body && !req.file) {
+      if (!body && !files.length) {
         return res.status(400).json({
           success: false,
           error: 'Write something or add a photo.',
@@ -390,40 +421,12 @@ router.post(
         });
       }
 
-      // Validate the actual file signature, not just its MIME type.
-      if (req.file) {
-        const buffer = req.file.buffer;
-
-        const isJpeg =
-          buffer.length >= 3 &&
-          buffer[0] === 0xff &&
-          buffer[1] === 0xd8 &&
-          buffer[2] === 0xff;
-
-        const isPng =
-          buffer.length >= 8 &&
-          buffer.subarray(0, 8).equals(
-            Buffer.from([
-              0x89, 0x50, 0x4e, 0x47,
-              0x0d, 0x0a, 0x1a, 0x0a,
-            ])
-          );
-
-        const isGif =
-          buffer.length >= 6 &&
-          ['GIF87a', 'GIF89a'].includes(
-            buffer.subarray(0, 6).toString('ascii')
-          );
-
-        const isWebp =
-          buffer.length >= 12 &&
-          buffer.toString('ascii', 0, 4) === 'RIFF' &&
-          buffer.toString('ascii', 8, 12) === 'WEBP';
-
-        if (!(isJpeg || isPng || isGif || isWebp)) {
+      // Check each file's real signature, not just its MIME type.
+      for (const file of files) {
+        if (!hasImageSignature(file.buffer)) {
           return res.status(400).json({
             success: false,
-            error: 'The uploaded file is not a supported image.',
+            error: 'One of the files is not a supported image.',
           });
         }
       }
@@ -521,45 +524,43 @@ router.post(
         });
       }
 
-      // Upload the validated image to Cloudinary.
+      // Upload the validated images to Cloudinary (in parallel, in the order chosen).
       const media = [];
 
-      if (req.file) {
-        // Ensure Cloudinary credentials are configured before uploading.
+      if (files.length) {
         cloudinary.ensureCloudinaryConfigured();
 
-        uploadedImage = await new Promise((resolve, reject) => {
+        const results = await Promise.allSettled(files.map((file) => new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
             {
               folder: 'arcadia/posts',
               resource_type: 'image',
               allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-              transformation: [
-                {
-                  width: 1600,
-                  height: 1600,
-                  crop: 'limit',
-                },
-              ],
+              transformation: [{ width: 1600, height: 1600, crop: 'limit' }],
             },
-            (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            }
+            (error, result) => (error ? reject(error) : resolve(result))
           );
 
-          stream.end(req.file.buffer);
-        });
+          stream.end(file.buffer);
+        })));
 
-        media.push({
-          type: 'image',
-          url: uploadedImage.secure_url,
-          publicId: uploadedImage.public_id,
-          width: uploadedImage.width,
-          height: uploadedImage.height,
-          format: uploadedImage.format,
-          bytes: uploadedImage.bytes,
-        });
+        uploadedImages = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+
+        const failed = results.find((r) => r.status === 'rejected');
+
+        if (failed) throw failed.reason;
+
+        for (const image of uploadedImages) {
+          media.push({
+            type: 'image',
+            url: image.secure_url,
+            publicId: image.public_id,
+            width: image.width,
+            height: image.height,
+            format: image.format,
+            bytes: image.bytes,
+          });
+        }
       }
 
       const post = await Post.create({
@@ -587,10 +588,10 @@ router.post(
         data: { post },
       });
     } catch (error) {
-      // Avoid leaving an orphaned Cloudinary image if saving fails.
-      if (uploadedImage?.public_id) {
+      // Avoid leaving orphaned Cloudinary images if saving fails.
+      for (const image of uploadedImages) {
         try {
-          await cloudinary.uploader.destroy(uploadedImage.public_id);
+          await cloudinary.uploader.destroy(image.public_id);
         } catch (cleanupError) {
           console.error(
             'Could not clean up an unsuccessful post image upload.',
