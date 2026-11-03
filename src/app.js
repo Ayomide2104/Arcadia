@@ -13,6 +13,7 @@ app.set('trust proxy', 1);
 const isProduction = process.env.NODE_ENV === 'production';
 const isRender = process.env.RENDER === 'true';
 const isDeployed = isProduction || isRender;
+const { isDevOrigin } = require('./config/origins');
 const configuredOrigins = process.env.CLIENT_URL || (isDeployed ? '' : 'http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174');
 const allowedOrigins = configuredOrigins
   .split(',').map((origin) => origin.trim()).filter(Boolean);
@@ -32,7 +33,7 @@ app.use(
 app.use(cors({
   credentials: true,
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin || allowedOrigins.includes(origin) || (!isDeployed && isDevOrigin(origin))) return callback(null, true);
     // A same-origin production frontend does not need CORS headers. With no
     // CLIENT_URL configured, leave browser CORS enforcement to the browser.
     if (isDeployed && !process.env.CLIENT_URL) return callback(null, false);
@@ -71,7 +72,7 @@ app.use(async (req, res, next) => {
   if (typeof origin !== 'string' || req.headers['sec-fetch-site'] === 'cross-site') return res.status(403).json({ success: false, error: 'A same-origin request is required.' });
   const scheme = req.secure ? 'https' : 'http';
   const sameOrigin = isDeployed && !process.env.CLIENT_URL && origin === `${scheme}://${req.get('host')}`;
-  if (!allowedOrigins.includes(origin) && !sameOrigin) return res.status(403).json({ success: false, error: 'Request origin is not allowed.' });
+  if (!allowedOrigins.includes(origin) && !sameOrigin && !(!isDeployed && isDevOrigin(origin))) return res.status(403).json({ success: false, error: 'Request origin is not allowed.' });
   // The admin area has its own sign-in cookie and its own CSRF token.
   if (req.path.startsWith('/api/admin/')) return next();
   if (!req.cookies?.mk_session) return next();
@@ -96,6 +97,7 @@ app.use('/admin', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();
 });
+app.use('/api', require('./middleware/jsonGzip'));
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/posts', require('./routes/postRoutes'));
@@ -103,6 +105,8 @@ app.use('/api/games', require('./routes/gameRoutes'));
 app.use('/api/search', require('./routes/searchRoutes'));
 app.use('/api/lfg', require('./routes/lfgRoutes'));
 app.use('/api/safety', require('./routes/safetyRoutes'));
+app.use('/api/follows', require('./routes/followRoutes'));
+app.use('/api/points', require('./routes/pointsRoutes'));
 app.use('/api/communities', require('./routes/communityRoutes'));
 app.use('/api/friends', require('./routes/friendRequestRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));
@@ -112,7 +116,20 @@ app.use('/api/admin', require('./routes/adminRoutes'));
 // Keep API misses on the JSON 404 path before static files are considered.
 app.use('/api', notFound);
 if (isDeployed) {
-  app.use(express.static(path.join(__dirname, '..', 'dist'), { fallthrough: true }));
+  app.use(express.static(path.join(__dirname, '..', 'dist'), {
+    fallthrough: true,
+    setHeaders(res, filePath) {
+      const file = filePath.replace(/\\/g, '/');
+      if (/\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.(js|css|woff2?)$/.test(file)) {
+        // Built files have the content hash in their name, so they can be cached for a year.
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (/\.html$/.test(file)) {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else if (/\.(jpe?g|png|webp|gif|svg|avif|ico)$/.test(file)) {
+        res.setHeader('Cache-Control', 'public, max-age=604800');
+      }
+    },
+  }));
 }
 // This is a single-page site with anchor navigation, so no HTML route fallback
 // is needed. Unknown paths retain the existing JSON 404 response.

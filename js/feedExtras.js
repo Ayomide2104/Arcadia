@@ -1,5 +1,7 @@
 /* Feed extras: the "why you are seeing this" tag, the ... menu (not interested,
    show less, mute) with undo, and the "you're all caught up" divider. */
+import { attachMenu } from './popover.js';
+
 export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
   function divider() {
     const node = document.createElement('div');
@@ -82,7 +84,7 @@ export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
       item.setAttribute('role', 'menuitem');
       item.textContent = label;
       item.addEventListener('click', async () => {
-        menu.hidden = true;
+        popover.hide();
         if (mode === 'report') { onReport(post); return; }
         if (mode === 'block') { onBlock(post.author); return; }
         try {
@@ -95,17 +97,10 @@ export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
       menu.append(item);
     }
 
-    const close = (event) => {
-      if (!menu.contains(event.target) && event.target !== button) { menu.hidden = true; document.removeEventListener('click', close); }
-    };
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      menu.hidden = !menu.hidden;
-      if (!menu.hidden) setTimeout(() => document.addEventListener('click', close), 0);
-    });
+    const popover = attachMenu(button, menu);
 
     header.style.position = 'relative';
-    header.append(button, menu);
+    header.append(button);
   }
 
   return { decorate, divider };

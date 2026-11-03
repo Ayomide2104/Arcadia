@@ -24,27 +24,31 @@ const CIRCLE_WINDOW_MS = 4 * DAY;
  *     (least recently seen first) and mark where the "caught up" line goes.
  */
 const { blockedEitherWay } = require('./blocks');
+const { getFollowingIds } = require('./follows');
 
 function createFeedEngine(models) {
   const { Post, SeenPost, FeedServed, FeedHide, UserInterest, Membership, Community, Game, getFriendIds, Reaction, Repost, Comment, User } = models;
 
   async function loadState(user) {
-    const empty = { friendIds: [], learned: null, hiddenPosts: new Set(), mutedAuthors: [], memberSlugs: [], seenAt: new Map(), servedAt: new Map() };
+    const empty = { friendIds: [], followingIds: [], learned: null, hiddenPosts: new Set(), mutedAuthors: [], memberSlugs: [], seenAt: new Map(), servedAt: new Map() };
     if (!user) return empty;
-    const blocked = await blockedEitherWay(user._id);
-    const [friendIds, learned, hides, memberships, seenRows, servedRows] = await Promise.all([
+    // One round trip instead of several in a row.
+    const [blocked, followingRaw, friendIds, learned, hides, memberships, seenRows, servedRows] = await Promise.all([
+      blockedEitherWay(user._id),
+      getFollowingIds(user._id),
       getFriendIds(user._id),
       UserInterest.findOne({ user: user._id }).lean(),
       FeedHide.find({ user: user._id }).select('kind target').lean(),
       Membership.find({ user: user._id }).select('community').lean(),
-      SeenPost.find({ user: user._id }).sort({ seenAt: -1 }).limit(4000).select('post seenAt').lean(),
-      FeedServed.find({ user: user._id }).sort({ servedAt: -1 }).limit(3000).select('post servedAt').lean()
+      SeenPost.find({ user: user._id }).sort({ seenAt: -1 }).limit(1500).select('post seenAt').lean(),
+      FeedServed.find({ user: user._id }).sort({ servedAt: -1 }).limit(1000).select('post servedAt').lean()
     ]);
     const communities = memberships.length
       ? await Community.find({ _id: { $in: memberships.map((row) => row.community) }, active: true }).select('slug').lean()
       : [];
     return {
       friendIds: friendIds.map(String),
+      followingIds: followingRaw.filter((id) => !blocked.includes(id)),
       learned,
       hiddenPosts: new Set(hides.filter((row) => row.kind === 'post').map((row) => String(row.target))),
       mutedAuthors: [...new Set([...hides.filter((row) => row.kind === 'author').map((row) => String(row.target)), ...blocked])],
@@ -74,6 +78,7 @@ function createFeedEngine(models) {
       if (state.friendIds.length) jobs.push(find({ author: { $in: state.friendIds }, ...PUBLIC_OR_GAME }, undefined, 120));
     } else {
       if (state.friendIds.length) jobs.push(find({ author: { $in: state.friendIds }, ...PUBLIC_OR_GAME }));
+      if (state.followingIds.length) jobs.push(find({ author: { $in: state.followingIds }, ...PUBLIC_OR_GAME }, undefined, 100));
       if (state.memberSlugs.length) jobs.push(find({ destinations: { $elemMatch: { type: 'community', target: { $in: state.memberSlugs } } } }));
       if (interestGames.length) jobs.push(find({ destinations: { $elemMatch: { type: 'game', target: { $in: interestGames } } } }, undefined, 80));
       if (topAuthors.length) jobs.push(find({ author: { $in: topAuthors }, ...PUBLIC_OR_GAME }, undefined, 40));
@@ -97,11 +102,12 @@ function createFeedEngine(models) {
     const ctx = {
       now, profile, seed,
       friendSet: new Set(state.friendIds),
+      followSet: new Set(state.followingIds),
       memberSlugs: new Set(state.memberSlugs),
       genresBySlug: new Map(games.map((row) => [row.slug, row.genres || []])),
       namesBySlug: new Map(games.map((row) => [row.slug, row.name]))
     };
-    const buckets = { friends: [], communities: [], interests: [], popular: [], discover: [] };
+    const buckets = { friends: [], following: [], communities: [], interests: [], popular: [], discover: [] };
     for (const post of posts) {
       const scored = scorePost(post, ctx);
       buckets[scored.source].push({ post, score: scored.score, source: scored.source, reason: scored.reason });
@@ -129,18 +135,18 @@ function createFeedEngine(models) {
     for (const post of posts) post.labels = labels;
   }
 
-  async function friendsTimeline({ user, state, limit, n, b, now }) {
-    const clauses = [{ removedAt: null }, { author: { $in: state.friendIds } }, PUBLIC_OR_GAME];
+  async function friendsTimeline({ user, state, limit, n, b, now, authors = state.friendIds, source = 'friends', reason = { type: 'friend', label: 'From your friend' } }) {
+    const clauses = [{ removedAt: null }, { author: { $in: authors } }, PUBLIC_OR_GAME];
     if (state.mutedAuthors.length) clauses.push({ author: { $nin: state.mutedAuthors } });
     const hidden = [...state.hiddenPosts];
     if (hidden.length) clauses.push({ _id: { $nin: hidden } });
     if (b) clauses.push({ _id: { $lt: b } });
-    const posts = state.friendIds.length
+    const posts = authors.length
       ? await Post.find({ $and: clauses }).sort({ _id: -1 }).limit(limit).lean()
       : [];
     if (posts.length) await Post.populate(posts, { path: 'author', select: 'username displayName avatar' });
     await attachLabels(posts);
-    for (const post of posts) post.feed = { source: 'friends', reason: { type: 'friend', label: 'From your friend' } };
+    for (const post of posts) post.feed = { source, reason };
     if (posts.length) {
       await FeedServed.bulkWrite(posts.map((item) => ({
         updateOne: { filter: { user: user._id, post: item._id }, update: { $set: { servedAt: new Date(now) }, $setOnInsert: { user: user._id, post: item._id } }, upsert: true }
@@ -264,6 +270,9 @@ function createFeedEngine(models) {
     // Friends: a plain timeline, newest first. It never goes empty just because
     // you have already scrolled past a post.
     if (user && feed === 'friends' && !game) return friendsTimeline({ user, state, limit, n, b, now });
+    if (user && feed === 'following' && !game) {
+      return friendsTimeline({ user, state, limit, n, b, now, authors: state.followingIds, source: 'following', reason: { type: 'following', label: 'From someone you follow' } });
+    }
 
     const rawProfile = mergeProfile(user || {}, state.learned, now);
     const profile = prepareProfile(rawProfile);

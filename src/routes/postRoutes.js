@@ -30,6 +30,7 @@ const feedEngine = createFeedEngine({
 });
 
 const { blockedEitherWay } = require('../services/blocks');
+const { getFollowingIds } = require('../services/follows');
 const router = express.Router();
 
 const validId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -152,7 +153,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
     const feed = typeof req.query.feed === 'string' ? req.query.feed : 'for-you';
 
-    if (!['for-you', 'interests', 'friends'].includes(feed)) {
+    if (!['for-you', 'interests', 'friends', 'following'].includes(feed)) {
       return res.status(400).json({ success: false, error: 'Invalid feed.' });
     }
 
@@ -163,6 +164,16 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
       if (!(await getFriendIds(req.user._id)).length) {
         return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'no-friends' } });
+      }
+    }
+
+    if (feed === 'following' && !req.query.game) {
+      if (!req.user) {
+        return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'signin' } });
+      }
+
+      if (!(await getFollowingIds(req.user._id)).length) {
+        return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'no-following' } });
       }
     }
 

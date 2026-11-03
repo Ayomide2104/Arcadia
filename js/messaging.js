@@ -384,7 +384,7 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
     }
   }
 
-  async function refreshConversations() {
+  async function refreshConversations(silent = false) {
     if (!getCurrentUser()) return;
 
     try {
@@ -392,7 +392,84 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       conversations = result.items || [];
       renderConversations();
     } catch (error) {
-      toast(error.message || 'Could not load conversations.');
+      if (!silent) toast(error.message || 'Could not load conversations.');
+    }
+  }
+
+  /* ---------- Keeping the open chat live ----------
+     Sockets deliver messages instantly. If the connection is blocked or drops
+     (tunnels, strict networks, sleeping phones) these checks fetch anything
+     missed, so nobody has to refresh by hand. */
+
+  let syncing = false;
+  let syncTimer = null;
+  let syncBound = false;
+
+  async function syncActive() {
+    if (!getCurrentUser() || !activeUsername || overlay.hidden || syncing) return;
+    syncing = true;
+    const username = activeUsername;
+    try {
+      const result = await api(`/messages/${encodeURIComponent(username)}`);
+      if (username !== activeUsername) return;
+      let added = false;
+      for (const raw of result.items || []) {
+        const item = normalizeMessage(raw);
+        const existing = item.id ? messages.querySelector(`[data-message-id="${CSS.escape(item.id)}"]`) : null;
+        if (existing) {
+          const receipt = item.isMine && item.readAt ? existing.querySelector('.arc-chat-receipt') : null;
+          if (receipt && !receipt.classList.contains('is-read')) {
+            receipt.textContent = receiptText(true);
+            receipt.classList.add('is-read');
+          }
+          continue;
+        }
+        messages.querySelector('.arc-chat-first')?.remove();
+        renderMessage(raw);
+        added = true;
+      }
+      if (added) {
+        scrollToLatest();
+        void markConversationRead(username);
+      }
+    } catch {
+      // The next check will try again.
+    } finally {
+      syncing = false;
+    }
+  }
+
+  function startLiveSync() {
+    if (!syncTimer) {
+      let tick = 0;
+      syncTimer = window.setInterval(() => {
+        if (document.visibilityState !== 'visible' || !getCurrentUser()) return;
+        tick += 1;
+        if (socket?.connected) {
+          // Connected: only a slow safety check for anything the socket missed.
+          if (tick % 8 === 0) void syncActive();
+          if (tick % 15 === 0) void refreshConversations(true);
+        } else {
+          // Not connected: poll the open chat every few seconds.
+          void syncActive();
+          if (tick % 4 === 0) void refreshConversations(true);
+        }
+      }, 4000);
+    }
+    if (!syncBound) {
+      syncBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && getCurrentUser()) {
+          void syncActive();
+          void refreshConversations(true);
+        }
+      });
+      window.addEventListener('online', () => {
+        if (!getCurrentUser()) return;
+        socket?.connect();
+        void syncActive();
+        void refreshConversations(true);
+      });
     }
   }
 
@@ -547,7 +624,12 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
         || String(last?.recipient || '') === otherUserId;
     });
 
-    const otherUsername = conversation?.user?.username
+    const me = getCurrentUser()?.username;
+    const hinted = rawMessage.senderUsername && rawMessage.recipientUsername
+      ? (rawMessage.senderUsername === me ? rawMessage.recipientUsername : rawMessage.senderUsername)
+      : '';
+
+    const otherUsername = hinted || conversation?.user?.username
       || (activeFriend?._id && String(activeFriend._id) === otherUserId
         ? activeFriend.username
         : activeFriend?.id && String(activeFriend.id) === otherUserId
@@ -605,6 +687,7 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
 
       socket.on('connect', () => {
         void refreshConversations();
+        void syncActive();
         // Friends may have come online or gone offline while we were disconnected.
         onPresence?.({ reconnect: true });
       });
@@ -615,10 +698,11 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       socket.on('message:read', handleReadReceipt);
 
       socket.on('connect_error', (error) => {
-        console.error('[Messaging] Socket connection failed:', error.message);
-        console.error('[Messaging] Connection details:', error);
+        console.warn('[Messaging] Live connection unavailable, checking for new messages instead:', error.message);
       });
     }
+
+    startLiveSync();
   }
 
   function disconnect() {
@@ -626,6 +710,7 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       socket.disconnect();
       socket = null;
     }
+    if (syncTimer) { window.clearInterval(syncTimer); syncTimer = null; }
 
     activeUsername = null;
     activeFriend = null;

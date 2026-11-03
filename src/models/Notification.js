@@ -5,7 +5,7 @@ const notificationSchema = new mongoose.Schema({
   actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: {
     type: String,
-    enum: ['friend_request', 'friend_accept', 'like', 'repost', 'comment', 'reply', 'lfg_request', 'lfg_accept', 'lfg_decline'],
+    enum: ['friend_request', 'friend_accept', 'like', 'repost', 'comment', 'reply', 'lfg_request', 'lfg_accept', 'lfg_decline', 'follow'],
     required: true
   },
   post: { type: mongoose.Schema.Types.ObjectId, ref: 'Post', default: null },

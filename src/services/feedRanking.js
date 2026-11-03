@@ -25,10 +25,11 @@ const MAX_KEYS = 60;
 
 // How many of every 100 slots each source gets.
 const QUOTAS = {
-  'for-you': { friends: 18, communities: 12, interests: 40, popular: 20, discover: 10 },
-  interests: { interests: 70, communities: 20, discover: 10 },
+  'for-you': { friends: 18, following: 16, communities: 10, interests: 34, popular: 16, discover: 6 },
+  interests: { interests: 60, following: 15, communities: 20, discover: 5 },
   friends: { friends: 100 },
-  game: { friends: 20, interests: 30, popular: 30, discover: 20 },
+  following: { following: 100 },
+  game: { friends: 20, following: 10, interests: 25, popular: 25, discover: 20 },
   guest: { popular: 75, discover: 25 }
 };
 
@@ -147,7 +148,9 @@ function scorePost(post, ctx) {
   const isFriend = ctx.friendSet?.has(authorId) || false;
   const freshness = 3 * Math.exp(-hours / 36);
   const interest = 3.2 * gameAff + 1.4 * genreAff + 1.8 * authorAff + 1.6 * communityAff;
-  const friend = isFriend ? 1.6 : 0;
+  const isFollowing = !isFriend && (ctx.followSet?.has(authorId) || false);
+  // People you follow rank higher; friends rank highest (you are connected both ways).
+  const friend = isFriend ? 1.6 : (isFollowing ? 1.3 : 0);
 
   const engagement = engagementOf(post);
   const velocity = engagement / Math.pow(hours + 2, 0.75);
@@ -163,6 +166,7 @@ function scorePost(post, ctx) {
   let source = 'discover';
   let reason = { type: 'discover', label: 'Something new for you' };
   if (isFriend) { source = 'friends'; reason = { type: 'friend', label: 'From your friend' }; }
+  else if (isFollowing) { source = 'following'; reason = { type: 'following', label: 'From someone you follow' }; }
   else if (memberSlug) { source = 'communities'; reason = { type: 'community', label: `From c/${memberSlug}` }; }
   else if (gameAff >= 0.25 || genreAff >= 0.5 || authorAff >= 0.5) {
     source = 'interests';

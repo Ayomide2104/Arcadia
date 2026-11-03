@@ -3,6 +3,7 @@ const { Server } = require('socket.io');
 const Session = require('./models/Session');
 const User = require('./models/User');
 const presence = require('./services/presence');
+const { isDevOrigin } = require('./config/origins');
 
 function getAllowedOrigins() {
   const isDeployed =
@@ -53,7 +54,7 @@ function attachSocketServer(httpServer, app) {
           return callback(new Error('An allowed browser origin is required.'));
         }
 
-        if (allowedOrigins.includes(origin)) {
+        if (allowedOrigins.includes(origin) || (!isDeployed && isDevOrigin(origin))) {
           return callback(null, true);
         }
 
@@ -77,7 +78,7 @@ function attachSocketServer(httpServer, app) {
         origin === `https://${request.headers.host}`;
 
       const allowed =
-        allowedOrigins.includes(origin) || sameOriginProduction;
+        allowedOrigins.includes(origin) || sameOriginProduction || (!isDeployed && isDevOrigin(origin));
 
       callback(allowed ? null : 'Origin is not allowed.', allowed);
     }
@@ -93,7 +94,7 @@ function attachSocketServer(httpServer, app) {
 
       if (
         typeof origin !== 'string' ||
-        (!allowedOrigins.includes(origin) && !sameOriginProduction)
+        (!allowedOrigins.includes(origin) && !sameOriginProduction && !(!isDeployed && isDevOrigin(origin)))
       ) {
         return next(new Error('Origin is not allowed.'));
       }

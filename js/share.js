@@ -66,6 +66,14 @@ async function copyText(text) {
 }
 
 export function createShare({ api, getUser, toast }) {
+  // A real share (copied link, app tile, system sheet, or sent to a friend) counts toward the author's Arcadian points.
+  function markShared() {
+    try {
+      const match = /#post\/([a-f\d]{24})/i.exec(current?.url || '');
+      if (match && getUser()) void api(`/points/shares/${match[1]}`, { method: 'POST' }).catch(() => {});
+    } catch { /* best effort */ }
+  }
+
   let dialog = null;
   let parts = null;
   let current = null;
@@ -131,6 +139,7 @@ export function createShare({ api, getUser, toast }) {
 
     copy.addEventListener('click', async () => {
       const ok = await copyText(current.url);
+      if (ok) markShared();
       setCopied(copy, ok);
       toast(ok ? 'Link copied.' : 'Could not copy the link.');
     });
@@ -157,6 +166,7 @@ export function createShare({ api, getUser, toast }) {
     disc.append(icon(paths));
     node.append(disc, el('span', 'share-app-label', label));
     if (onClick) node.addEventListener('click', onClick);
+    if (href) node.addEventListener('click', markShared);
     return node;
   }
 
@@ -168,7 +178,7 @@ export function createShare({ api, getUser, toast }) {
 
     appRow.append(appTile({
       label: 'Copy link', color: '#5a3fd6', paths: PATHS.link,
-      onClick: async () => { const ok = await copyText(url); toast(ok ? 'Link copied.' : 'Could not copy the link.'); if (ok) dialog.close(); },
+      onClick: async () => { const ok = await copyText(url); if (ok) markShared(); toast(ok ? 'Link copied.' : 'Could not copy the link.'); if (ok) dialog.close(); },
     }));
     for (const target of TARGETS) {
       appRow.append(appTile({ label: target.label, color: target.color, paths: PATHS[target.id], href: target.href(url, shareText) }));
@@ -177,7 +187,7 @@ export function createShare({ api, getUser, toast }) {
       appRow.append(appTile({
         label: 'More', color: '#8b90a0', paths: PATHS.more,
         onClick: async () => {
-          try { await navigator.share({ title: title || 'Arcadia', text: shareText, url }); dialog.close(); }
+          try { await navigator.share({ title: title || 'Arcadia', text: shareText, url }); markShared(); dialog.close(); }
           catch { /* the person closed the system sheet */ }
         },
       }));
@@ -241,6 +251,7 @@ export function createShare({ api, getUser, toast }) {
   async function sendToFriends() {
     const { send, note } = parts;
     if (!selected.size || send.disabled) return;
+    markShared();
     const names = [...selected];
     const message = note.value.trim();
     const content = [message, current.url].filter(Boolean).join('\n');

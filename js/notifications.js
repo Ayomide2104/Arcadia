@@ -5,6 +5,7 @@ import { setAvatar } from './avatar.js';
 const COPY = {
   friend_request: 'sent you a friend request',
   friend_accept: 'accepted your friend request',
+  follow: 'started following you',
   lfg_request: 'asked to join your invite',
   lfg_accept: 'accepted you into their invite',
   lfg_decline: 'couldn’t fit you into their invite',
@@ -132,7 +133,7 @@ export function createNotifications({ api, getUser, button, onNeedSignIn, onOpen
       api(`/notifications/${item.id}/read`, { method: 'POST' }).catch(() => {});
     }
     if (item.type === 'friend_request') onOpenFriends();
-    else if (item.type === 'friend_accept') onOpenProfile(item.actor?.username);
+    else if (item.type === 'friend_accept' || item.type === 'follow') onOpenProfile(item.actor?.username);
     else if (String(item.type).startsWith('lfg_')) onOpenLfg?.(item);
     else if (item.postId) onOpenPost(item.postId);
   }

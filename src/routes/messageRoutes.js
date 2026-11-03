@@ -268,15 +268,10 @@ router.post('/:username', sendMessageLimit, async (req, res, next) => {
     const io = req.app.get('io');
 
     if (io) {
-      io.to(`user:${String(result.friend._id)}`).emit(
-        'message:new',
-        item
-      );
-
-      io.to(`user:${String(req.user._id)}`).emit(
-        'message:new',
-        item
-      );
+      // Usernames travel with the event so clients can place it without a lookup.
+      const live = { ...item, senderUsername: req.user.username, recipientUsername: result.friend.username };
+      io.to(`user:${String(result.friend._id)}`).emit('message:new', live);
+      io.to(`user:${String(req.user._id)}`).emit('message:new', live);
     }
 
     res.status(201).json({

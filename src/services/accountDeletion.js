@@ -22,6 +22,8 @@ const Lfg = require('../models/Lfg');
 const LfgRequest = require('../models/LfgRequest');
 const Block = require('../models/Block');
 const Report = require('../models/Report');
+const Follow = require('../models/Follow');
+const PostShare = require('../models/PostShare');
 const cloudinary = require('../config/cloudinary');
 const { removeOwnedImage } = require('./media');
 
@@ -144,6 +146,8 @@ async function deleteUserAndData(userId, { io = null } = {}) {
   await LfgRequest.deleteMany({ user: userId });
   await Block.deleteMany({ $or: [{ blocker: userId }, { blocked: userId }] });
   await Report.deleteMany({ reporter: userId });
+  await Follow.deleteMany({ $or: [{ follower: userId }, { following: userId }] });
+  await PostShare.deleteMany({ user: userId });
   if (io) {
     try { io.in(`user:${userId}`).disconnectSockets(true); } catch { /* not connected */ }
   }

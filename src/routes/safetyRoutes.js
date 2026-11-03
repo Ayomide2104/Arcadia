@@ -8,6 +8,7 @@ const Comment = require('../models/Comment');
 const Lfg = require('../models/Lfg');
 const Friendship = require('../models/Friendship');
 const FriendRequest = require('../models/FriendRequest');
+const Follow = require('../models/Follow');
 const { requireAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 
@@ -52,6 +53,7 @@ router.post('/blocks/:username', blockLimit, async (req, res, next) => {
     await Promise.all([
       Friendship.deleteMany({ $or: [{ user1: a, user2: b }, { user1: b, user2: a }] }),
       FriendRequest.deleteMany({ $or: [{ sender: a, recipient: b }, { sender: b, recipient: a }] }),
+      Follow.deleteMany({ $or: [{ follower: a, following: b }, { follower: b, following: a }] }),
     ]);
     res.status(201).json({ success: true, data: { blocked: true, username: person.username } });
   } catch (error) { next(error); }

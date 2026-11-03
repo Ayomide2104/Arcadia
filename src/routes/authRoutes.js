@@ -138,7 +138,8 @@ router.patch('/settings', requireAuth, async (req, res, next) => {
     }
     if (Object.hasOwn(body, 'privacy')) {
       const value = body.privacy;
-      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['profileVisibility', 'friendRequests', 'showOnlineStatus'].includes(key)) || !['public', 'private'].includes(value.profileVisibility) || !['everyone', 'nobody'].includes(value.friendRequests)) return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['profileVisibility', 'friendRequests', 'showOnlineStatus', 'followLists'].includes(key)) || !['public', 'private'].includes(value.profileVisibility) || !['everyone', 'nobody'].includes(value.friendRequests)) return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
+      if (Object.hasOwn(value, 'followLists') && !['everyone', 'nobody'].includes(value.followLists)) return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
       if (Object.hasOwn(value, 'showOnlineStatus') && typeof value.showOnlineStatus !== 'boolean') return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
       update.privacy = value;
     }

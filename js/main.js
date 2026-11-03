@@ -16,7 +16,13 @@ import { createSearch } from './search.js';
 import { createLfg } from './lfg.js';
 import { createDrawer } from './drawer.js';
 import { createSafety } from './safety.js';
+import { createSocial } from './social.js';
+import { initViewport } from './viewport.js';
+import { attachMenu } from './popover.js';
 import { createThread } from './commentThread.js';
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 let notifications = null;
 
@@ -44,6 +50,17 @@ const safety = createSafety({
   onBlocked: () => { selectView('feed'); try { loadFeed(true); } catch { /* feed reloads on next visit */ } },
 });
 
+const social = createSocial({
+  api: (path, options) => api(path, options),
+  toast: (message) => toast(message),
+  getUser: () => currentUser,
+  onNeedSignIn: () => { openAuth(); toast('Sign in to follow players.'); },
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  openProfile: (username) => { selectView('profile'); void renderProfile(username); },
+  goPoints: (username) => { social.setPointsTarget(username); selectView('points'); },
+  mountPoints: $('#view-points'),
+});
+
 const feedExtras = createFeedExtras({
   api: (path, options) => api(path, options),
   toast: (message) => toast(message),
@@ -58,8 +75,8 @@ presence.configure({
   onOpenFriends: () => selectView('friends'),
   onNeedSignIn: () => openAuth(),
 });
-const $ = (selector, root = document) => root.querySelector(selector);
-const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+// const $ = (selector, root = document) => root.querySelector(selector);
+// const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
 const authForm = $('#auth-form');
 let authMode = 'login';
@@ -133,6 +150,7 @@ function selectView(view) {
   if (view === 'groups') loadCommunities();
   if (view === 'updates') loadUpdates();
   if (view === 'lfg') void lfgPage.show();
+  if (view === 'points') void social.renderPoints();
   if (view === 'profile') profilePromise = renderProfile();
   if (view === 'friends') void renderFriends();
   if (view === 'inbox') messaging?.openInbox();
@@ -176,7 +194,7 @@ window.addEventListener('scroll', () => {
 
 $$('.feed-tab').forEach((tab, index) => {
   tab.addEventListener('click', () => {
-    if ((tab.dataset.filter === 'friends' || tab.dataset.filter === 'groups') && !currentUser) { openAuth(); return; }
+    if (['friends', 'following', 'groups'].includes(tab.dataset.filter) && !currentUser) { openAuth(); return; }
     $$('.feed-tab').forEach((item) => {
       const active = item === tab;
       item.classList.toggle('is-selected', active);
@@ -456,6 +474,18 @@ async function loadFeed(filter = activeFeed, cursor = null) {
     if (!items.length && !cursor && filter === 'groups') {
       state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>No community posts yet</h2><p>Join a few communities and their posts will show up here.</p><button class="button button--primary" type="button" id="feed-find-communities">Find communities</button>';
       $('#feed-find-communities')?.addEventListener('click', () => selectView('groups'));
+      return;
+    }
+
+    if (!items.length && !cursor && filter === 'following') {
+      const none = result.unavailable === 'no-following';
+      state.innerHTML = `<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-friends.svg" alt=""/><h2>${none ? 'Follow people to fill this feed' : 'Nothing new from people you follow'}</h2><p>${none ? 'Follow players you enjoy and their posts show up here, and a bit more often in For you too.' : 'Check back soon, or find more players to follow.'}</p>`;
+      const action = document.createElement('button');
+      action.className = 'button button--primary';
+      action.type = 'button';
+      action.textContent = none ? 'Find players' : 'Write a post';
+      action.addEventListener('click', () => (none ? selectView('lfg') : composePost()));
+      state.append(action);
       return;
     }
 
@@ -1275,7 +1305,7 @@ $('#comments-form').addEventListener('submit', async (event) => {
 const commentsHandle = $('.comments-drag-handle');
 commentsHandle.addEventListener('touchstart', (event) => { commentsTouchStart = event.touches[0].clientY; }, { passive: true });
 commentsHandle.addEventListener('touchend', (event) => { if (commentsTouchStart !== null && event.changedTouches[0].clientY - commentsTouchStart > 75) requestCommentsClose(); commentsTouchStart = null; }, { passive: true });
-window.visualViewport?.addEventListener('resize', () => { document.documentElement.style.setProperty('--visual-vh', `${window.visualViewport.height}px`); document.documentElement.style.setProperty('--keyboard-inset', `${Math.max(0, window.innerHeight - window.visualViewport.height)}px`); });
+initViewport();
 window.addEventListener('popstate', syncCommentsRoute); window.addEventListener('hashchange', syncCommentsRoute);
 if (/^#post\/[a-f\d]{24}$/i.test(location.hash)) window.setTimeout(syncCommentsRoute, 0);
 
@@ -1408,6 +1438,7 @@ createDrawer({
   actions: {
     go: (view) => selectView(view),
     openInvites: () => { selectView('lfg'); void lfgPage.openFor('', 'mine'); },
+    openPoints: () => { social.setPointsTarget(currentUser?.username); selectView('points'); },
     openNotifications: () => $('#notifications-button').click(),
     openSettings: async () => { selectView('profile'); await profilePromise; renderSettings($('#view-profile')); },
     compose: () => composer.open({}),
@@ -1558,7 +1589,7 @@ const ARCADIA_GAME_CATALOG = {
   
   'among us': {
     title: 'Among Us',
-    banner: '',
+    banner: 'among-us-banner.jpg',
     cover: 'among-us.jpg',
     genre: 'Social Deduction · Multiplayer',
     developer: 'Innersloth',
@@ -1568,7 +1599,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'apex legends': {
     title: 'Apex Legends',
-    banner: '',
+    banner: 'apex-legends-banner.jpg',
     cover: 'apex-legends.jpg',
     genre: 'Battle Royale · FPS',
     developer: 'Respawn Entertainment',
@@ -1578,7 +1609,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'asphalt legends unite': {
     title: 'Asphalt Legends Unite',
-    banner: '',
+    banner: 'asphalt-legends-unite-banner.jpg',
     cover: 'asphalt-legends-unite.jpg',
     genre: 'Racing · Arcade',
     developer: 'Gameloft',
@@ -1588,7 +1619,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'dota 2': {
     title: 'Dota 2',
-    banner: '',
+    banner: 'dota-2-banner.jpg',
     cover: 'dota-2.jpg',
     genre: 'MOBA · Strategy',
     developer: 'Valve',
@@ -1598,7 +1629,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'elden ring': {
     title: 'Elden Ring',
-    banner: '',
+    banner: 'elden-ring-banner.jpg',
     cover: 'elden-ring.jpg',
     genre: 'Action RPG · Open World',
     developer: 'FromSoftware',
@@ -1608,7 +1639,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'ea sports fc': {
     title: 'EA SPORTS FC',
-    banner: '',
+    banner: 'ea-sports-fc-banner.jpg',
     cover: 'ea-sports-fc.jpg',
     genre: 'Football · Sports',
     developer: 'EA SPORTS',
@@ -1618,7 +1649,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'forza horizon 5': {
     title: 'Forza Horizon 5',
-    banner: '',
+    banner: 'forza-horizon-5-banner.jpg',
     cover: 'forza-horizon-5.jpg',
     genre: 'Racing · Open World',
     developer: 'Playground Games',
@@ -1628,7 +1659,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'genshin impact': {
     title: 'Genshin Impact',
-    banner: '',
+    banner: 'genshin-impact-banner.jpg',
     cover: 'genshin-impact.jpg',
     genre: 'Action RPG · Adventure',
     developer: 'HoYoverse',
@@ -1638,7 +1669,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'grand theft auto v': {
     title: 'Grand Theft Auto V',
-    banner: '',
+    banner: 'gta-v-banner.jpg',
     cover: 'gta-v.jpg',
     genre: 'Action · Open World',
     developer: 'Rockstar Games',
@@ -1648,7 +1679,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'gta v': {
     title: 'Grand Theft Auto V',
-    banner: '',
+    banner: 'gta-v-banner.jpg',
     cover: 'gta-v.jpg',
     genre: 'Action · Open World',
     developer: 'Rockstar Games',
@@ -1658,7 +1689,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'league of legends': {
     title: 'League of Legends',
-    banner: '',
+    banner: 'league-of-legends-banner.jpg',
     cover: 'league-of-legends.jpg',
     genre: 'MOBA · Strategy',
     developer: 'Riot Games',
@@ -1668,7 +1699,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'overwatch 2': {
     title: 'Overwatch 2',
-    banner: '',
+    banner: 'overwatch-2-banner.jpg',
     cover: 'overwatch-2.jpg',
     genre: 'Hero Shooter · Action',
     developer: 'Blizzard Entertainment',
@@ -1678,7 +1709,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'rainbow six siege': {
     title: 'Rainbow Six Siege',
-    banner: '',
+    banner: 'rainbow-six-siege-banner.jpg',
     cover: 'rainbow-six-siege.jpg',
     genre: 'Tactical FPS · Shooter',
     developer: 'Ubisoft',
@@ -1688,7 +1719,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'rocket league': {
     title: 'Rocket League',
-    banner: '',
+    banner: 'rocket-league-banner.jpg',
     cover: 'rocket-league.jpg',
     genre: 'Sports · Racing',
     developer: 'Psyonix',
@@ -1698,7 +1729,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'stardew valley': {
     title: 'Stardew Valley',
-    banner: '',
+    banner: 'stardew-valley-banner.jpg',
     cover: 'stardew-valley.jpg',
     genre: 'Simulation · Farming RPG',
     developer: 'ConcernedApe',
@@ -1708,7 +1739,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'tekken 8': {
     title: 'TEKKEN 8',
-    banner: '',
+    banner: 'tekken-8-banner.jpg',
     cover: 'tekken-8.jpg',
     genre: 'Fighting · Action',
     developer: 'Bandai Namco Studios',
@@ -1718,7 +1749,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'the sims 4': {
     title: 'The Sims 4',
-    banner: '',
+    banner: 'the-sims-4-banner.jpg',
     cover: 'the-sims-4.jpg',
     genre: 'Life Simulation',
     developer: 'Maxis',
@@ -1728,7 +1759,7 @@ const ARCADIA_GAME_CATALOG = {
 
   'valorant': {
     title: 'VALORANT',
-    banner: '',
+    banner: 'valorant-banner.jpg',
     cover: 'valorant.jpg',
     genre: 'Tactical FPS · Hero Shooter',
     developer: 'Riot Games',
@@ -2062,6 +2093,23 @@ function pfConfirm(title, message, confirmLabel) {
   });
 }
 
+function pfMoreMenu(user) {
+  const wrap = uiEl('div', 'pf-more');
+  const button = uiEl('button', 'button pf-icon-btn', ''); button.type = 'button';
+  button.setAttribute('aria-label', 'More options');
+  button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>';
+  const menu = uiEl('div', 'pf-more-menu'); menu.setAttribute('role', 'menu');
+  const item = (label, danger, run) => {
+    const entry = uiEl('button', `pf-more-item${danger ? ' is-danger' : ''}`, label); entry.type = 'button'; entry.setAttribute('role', 'menuitem');
+    entry.addEventListener('click', () => { popover.hide(); run(); });
+    return entry;
+  };
+  menu.append(item('Report', false, () => safety.report({ type: 'user', target: user.username, label: `@${user.username}` })), item(`Block @${user.username}`, true, () => safety.block(user)));
+  const popover = attachMenu(button, menu);
+  wrap.append(button);
+  return wrap;
+}
+
 async function pfFriendActions(actions, user) {
   const make = (label, className, handler) => {
     const button = uiEl('button', className, label); button.type = 'button';
@@ -2069,7 +2117,7 @@ async function pfFriendActions(actions, user) {
   };
   const render = async () => {
     actions.replaceChildren();
-    if (!currentUser) { actions.append(make('Add friend', 'button button--primary', () => openAuth())); return; }
+    if (!currentUser) { actions.append(make('Add friend', 'button', () => openAuth())); return; }
     let info;
     try { info = await api(`/friends/status/${encodeURIComponent(user.username)}`); } catch { return; }
     if (info.status === 'self') return;
@@ -2080,7 +2128,7 @@ async function pfFriendActions(actions, user) {
     };
     const name = encodeURIComponent(user.username);
     if (info.status === 'none') {
-      actions.append(make('Add friend', 'button button--primary', (b) => run(b, () => api(`/friends/${name}`, { method: 'POST' }), 'Friend request sent.')));
+      actions.append(make('Add friend', 'button', (b) => run(b, () => api(`/friends/${name}`, { method: 'POST' }), 'Friend request sent.')));
     } else if (info.status === 'sent') {
       actions.append(uiEl('span', 'pf-chip', 'Request sent'),
         make('Cancel request', 'button', (b) => run(b, () => api(`/friends/${info.requestId}`, { method: 'DELETE' }), 'Request cancelled.')));
@@ -2090,10 +2138,14 @@ async function pfFriendActions(actions, user) {
         make('Decline', 'button', (b) => run(b, () => api(`/friends/${info.requestId}`, { method: 'PATCH', body: JSON.stringify({ action: 'reject' }) }), 'Request declined.')));
     } 
 else if (info.status === 'friends') {
-  actions.append(make('Message', 'button button--primary', () => {
+  const chat = make('', 'button pf-icon-btn', () => {
     selectView('inbox');
     messaging?.openChat(user);
-  }));
+  });
+  chat.setAttribute('aria-label', `Message ${user.displayName || user.username}`);
+  chat.title = 'Message';
+  chat.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.8-3.1A7.5 7.5 0 1 1 20 11.5Z"/></svg>';
+  actions.append(chat);
 
   actions.append(make('Friends', 'button', async (b) => {
     const ok = await pfConfirm(
@@ -2304,6 +2356,7 @@ if (user.banner && /^https:\/\//i.test(user.banner)) {
     const avatar = uiEl('div', 'pf-avatar', display[0].toUpperCase()); setAvatar(avatar, user.avatar || 'gradient-violet', display[0].toUpperCase()); avatar.setAttribute('aria-hidden', 'true');
     const ident = uiEl('div', 'pf-id'); ident.append(uiEl('h2', 'pf-name', display), uiEl('p', 'pf-handle', `@${user.username}`));
     const actions = uiEl('div', 'pf-actions');
+    let followSlot = null;
     if (isSelf) {
       const edit = uiEl('button', 'button button--primary', 'Edit profile'); edit.type = 'button'; edit.addEventListener('click', () => openEditProfile(user));
       const settings = uiEl('button', 'button', 'Settings'); settings.type = 'button'; settings.addEventListener('click', () => renderSettings(host));
@@ -2313,12 +2366,11 @@ if (user.banner && /^https:\/\//i.test(user.banner)) {
       chat.addEventListener('click', () => selectView('inbox'));
       actions.append(chat);
     } else {
-         void pfFriendActions(actions, user);
-         const more = uiEl('button', 'button', 'Report'); more.type = 'button';
-         more.addEventListener('click', () => safety.report({ type: 'user', target: user.username, label: `@${user.username}` }));
-         const blockButton = uiEl('button', 'button', 'Block'); blockButton.type = 'button';
-         blockButton.addEventListener('click', () => safety.block(user));
-         actions.append(more, blockButton);
+      // Follow is the main action; friends, chat and the ⋯ menu sit beside it.
+      followSlot = uiEl('div', 'pf-slot');
+      const friendSlot = uiEl('div', 'pf-slot');
+      void pfFriendActions(friendSlot, user);
+      actions.append(followSlot, friendSlot, pfMoreMenu(user));
     }
     head.append(avatar, ident, actions);
 
@@ -2422,7 +2474,9 @@ if (user.banner && /^https:\/\//i.test(user.banner)) {
     panelNodes.about.append(about);
     void communitiesPage.renderProfileSection(panelNodes.communities, profileUsername, isSelf);
 
-    card.append(cover, head, bio, chips, tabs, panels);
+    const statsRow = uiEl('div', 'pf-stats');
+    void social.renderProfileSocial(user, { followSlot, statsHost: statsRow, isSelf });
+    card.append(cover, head, bio, statsRow, chips, tabs, panels);
     select(initialTab);
     void loadProfilePosts(user.username, list);
   } catch (e) {
@@ -2876,14 +2930,15 @@ async function renderSettings(host) {
   const privacyCard = stCard('Privacy');
   privacyCard.append(
     stRow('Profile visibility', 'Who can see your profile and posts.', stSelect('profileVisibility', [['public', 'Public'], ['private', 'Private']], privacy.profileVisibility || 'public', 'Profile visibility')),
-    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests'))
+    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests')),
+    stRow('Followers and following', 'Who can open your followers and following lists. Your counts stay visible.', stSelect('followLists', [['everyone', 'Everyone'], ['nobody', 'Only me']], privacy.followLists || 'everyone', 'Followers and following'))
   );
   const saveBar = uiEl('div', 'st-save'); const savePrefs = uiEl('button', 'button button--primary', 'Save preferences'); savePrefs.type = 'submit'; saveBar.append(savePrefs);
   form.append(notifications, privacyCard, saveBar);
   form.addEventListener('submit', async (event) => {
     event.preventDefault(); const values = new FormData(form); savePrefs.disabled = true;
     try {
-      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests') } }) });
+      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests'), followLists: values.get('followLists') || 'everyone' } }) });
       toast('Settings saved.');
     } catch (e) { toast(e.message); } finally { savePrefs.disabled = false; }
   });
