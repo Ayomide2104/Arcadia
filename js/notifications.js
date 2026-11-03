@@ -5,6 +5,9 @@ import { setAvatar } from './avatar.js';
 const COPY = {
   friend_request: 'sent you a friend request',
   friend_accept: 'accepted your friend request',
+  lfg_request: 'asked to join your invite',
+  lfg_accept: 'accepted you into their invite',
+  lfg_decline: 'couldn’t fit you into their invite',
   like: 'liked your post',
   repost: 'reposted your post',
   comment: 'commented on your post',
@@ -27,7 +30,7 @@ function timeAgo(value) {
   return new Date(value).toLocaleDateString();
 }
 
-export function createNotifications({ api, getUser, button, onNeedSignIn, onOpenPost, onOpenProfile, onOpenFriends }) {
+export function createNotifications({ api, getUser, button, onNeedSignIn, onOpenPost, onOpenProfile, onOpenFriends, onOpenLfg }) {
   if (!button) return { refresh() {}, reset() {} };
 
   const state = { items: [], unread: 0, cursor: null, open: false, loading: false, timer: null };
@@ -130,6 +133,7 @@ export function createNotifications({ api, getUser, button, onNeedSignIn, onOpen
     }
     if (item.type === 'friend_request') onOpenFriends();
     else if (item.type === 'friend_accept') onOpenProfile(item.actor?.username);
+    else if (String(item.type).startsWith('lfg_')) onOpenLfg?.(item);
     else if (item.postId) onOpenPost(item.postId);
   }
 

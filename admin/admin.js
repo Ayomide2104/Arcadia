@@ -181,6 +181,7 @@ function renderDisabled() {
 const PAGES = [
   ['overview', 'Overview', '📊'],
   ['users', 'Users', '👥'],
+  ['reports', 'Reports', '🚩'],
   ['content', 'Content', '📝'],
   ['communities', 'Communities', '🏛️'],
   ['system', 'System', '🛠️'],
@@ -195,7 +196,7 @@ function renderShell(page) {
     ...nav,
     h('div', { class: 'side__foot' }, h('button', { class: 'nav', onClick: async () => { try { await api('/logout', { method: 'POST' }); } catch { /* already signed out */ } csrf = null; renderLogin(); } }, h('span', { 'aria-hidden': 'true' }, '🚪'), 'Sign out')));
   app.replaceChildren(h('div', { class: 'shell' }, side, main));
-  ({ overview: pageOverview, users: pageUsers, content: pageContent, system: pageSystem,
+  ({ overview: pageOverview, users: pageUsers, reports: pageReports, content: pageContent, system: pageSystem,
     communities: (target) => pageCommunities(target, { h, api, guard, modal, toast, number, dateText, renderLogin }) })[page](main);
 }
 
@@ -308,6 +309,47 @@ function pageUsers(main) {
   more.addEventListener('click', () => load(false));
   main.append(h('div', { class: 'page-head' }, h('h1', {}, 'Users')), h('div', { class: 'toolbar' }, search), list, h('div', { class: 'toolbar', style: 'margin-top:14px' }, more));
   load(true);
+}
+
+/* ----------------------------- reports ---------------------------- */
+
+function pageReports(main) {
+  const list = h('div', { class: 'list' });
+  let status = 'open';
+  const tabs = h('div', { class: 'toolbar' });
+
+  async function load() {
+    list.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
+    const data = await guard(api(`/reports?status=${status}`), list);
+    if (!data) return;
+    list.replaceChildren();
+    if (!data.items.length) list.append(h('p', { class: 'empty' }, status === 'open' ? 'No open reports. Nice and quiet.' : 'Nothing here.'));
+    for (const item of data.items) list.append(card(item));
+  }
+
+  function card(item) {
+    const who = item.subject ? `@${item.subject.username}` : 'Unknown';
+    const resolve = async (next, node) => {
+      try { await api(`/reports/${item.id}`, { method: 'PATCH', body: { status: next } }); node.remove(); toast(next === 'actioned' ? 'Marked as actioned.' : 'Dismissed.'); }
+      catch (error) { toast(error.message); }
+    };
+    const node = h('article', { class: 'post' },
+      h('div', { class: 'post__head' }, h('div', { class: 'row__main' },
+        h('div', { class: 'row__name' }, `${item.type.toUpperCase()} · ${item.reason}`),
+        h('div', { class: 'row__meta' }, `About ${who} · reported by @${item.reporter?.username || 'unknown'} · ${ago(item.createdAt)}`))),
+      item.preview ? h('p', { class: 'post__body' }, item.preview) : null,
+      item.details ? h('p', { class: 'row__meta' }, `“${item.details}”`) : null,
+      status === 'open' ? h('div', { class: 'modal__actions' },
+        h('button', { class: 'btn btn--small', type: 'button', onClick: () => resolve('dismissed', node) }, 'Dismiss'),
+        h('button', { class: 'btn btn--small btn--danger', type: 'button', onClick: () => resolve('actioned', node) }, 'Mark actioned')) : null);
+    return node;
+  }
+
+  for (const [value, label] of [['open', 'Open'], ['actioned', 'Actioned'], ['dismissed', 'Dismissed']]) {
+    tabs.append(h('button', { class: 'btn btn--small', type: 'button', onClick: () => { status = value; load(); } }, label));
+  }
+  main.append(h('div', { class: 'page-head' }, h('h1', {}, 'Reports')), tabs, list);
+  load();
 }
 
 /* ----------------------------- content ---------------------------- */

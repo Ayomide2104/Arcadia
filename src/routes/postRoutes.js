@@ -29,6 +29,7 @@ const feedEngine = createFeedEngine({
   Reaction, Repost, Comment, User,
 });
 
+const { blockedEitherWay } = require('../services/blocks');
 const router = express.Router();
 
 const validId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -883,6 +884,9 @@ router.get('/:id/comments', optionalAuth, async (req, res, next) => {
         error: 'Post not found.',
       });
     }
+
+    const hiddenAuthors = await blockedEitherWay(req.user?._id);
+    if (hiddenAuthors.length) commentQuery.author = { $nin: hiddenAuthors };
 
     const comments = await Comment.find(commentQuery)
       .sort({ _id: 1 })

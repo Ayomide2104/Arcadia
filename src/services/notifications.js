@@ -1,4 +1,5 @@
 const Notification = require('../models/Notification');
+const { isBlockedBetween } = require('./blocks');
 const User = require('../models/User');
 
 // Which account preference switches a notification type off.
@@ -8,7 +9,8 @@ const PREFERENCE = { comment: 'comments', reply: 'comments', like: 'reactions', 
  * Create a notification. Never throws: a failed notification must not break
  * the action (like, comment, friend request) that caused it.
  */
-async function notify({ recipient, actor, type, post = null, comment = null, key }) {
+async function notify({ recipient, actor, type, post = null, comment = null, lfg = null, key }) {
+  if (actor && recipient && await isBlockedBetween(recipient, actor)) return null;
   try {
     if (!recipient || !actor || !key) return false;
     if (String(recipient) === String(actor)) return false;
@@ -22,7 +24,7 @@ async function notify({ recipient, actor, type, post = null, comment = null, key
 
     const result = await Notification.updateOne(
       { recipient, key },
-      { $setOnInsert: { recipient, actor, type, post, comment, key, readAt: null, createdAt: new Date() } },
+      { $setOnInsert: { recipient, actor, type, post, comment, lfg, key, readAt: null, createdAt: new Date() } },
       { upsert: true }
     );
     return Boolean(result.upsertedCount);

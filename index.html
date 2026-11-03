@@ -40,6 +40,9 @@
     <link rel="stylesheet" href="/css/presence.css" />
     <link rel="stylesheet" href="/css/trending.css" />
     <link rel="stylesheet" href="/css/arcadia-share.css" />
+    <link rel="stylesheet" href="/css/arcadia-lfg.css" />
+    <link rel="stylesheet" href="/css/arcadia-drawer.css" />
+    <link rel="stylesheet" href="/css/arcadia-safety.css" />
     <link rel="stylesheet" href="/css/arcadia-fixes.css" />
     <script type="module" src="/js/main.js"></script>
   </head>
@@ -47,10 +50,9 @@
     <!-- Existing test account: MKSTUDIOS / @mk_studios. -->
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="topbar">
-      <a class="brand" href="#feed" aria-label="Arcadia home"><img class="brand__mark" src="/assets/arcadia/brand/logo-mark.svg" alt=""/><span class="brand__name">Arcadia</span></a>
+      <div class="topbar__left"><button class="icon-button menu-toggle" id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="app-drawer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><a class="brand" href="#feed" aria-label="Arcadia home"><img class="brand__mark" src="/assets/arcadia/brand/logo-mark.svg" alt=""/><span class="brand__name">Arcadia</span></a></div>
       <button class="icon-button mobile-search-toggle" id="mobile-search-toggle" type="button" aria-label="Open search" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg></button><div class="topbar-search" role="search"><label class="sr-only" for="global-search">Search players, games and communities</label><input id="global-search" type="search" placeholder="Search players, games and communities" enterkeyhint="search" /><div class="search-panel" id="search-panel" hidden></div></div>
       <div class="topbar__right">
-        <button class="icon-button" type="button" data-view-link="updates" aria-label="Game updates" title="Game updates"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13v13a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5"/></svg></button>
         <button class="icon-button" type="button" id="notifications-button" aria-label="Notifications" title="Notifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
         <button class="avatar avatar--self" id="auth-avatar" type="button" aria-label="Sign in to your profile">?</button>
         <button class="sr-only" id="auth-open" type="button" aria-label="Sign in">Sign in</button>
@@ -124,6 +126,7 @@
           <div class="mobile-shortcuts__rail">
             <button type="button" data-view-link="games"><span class="shortcut-icon shortcut-icon--games">⌘</span><span>Games</span></button>
             <button type="button" data-view-link="updates"><span class="shortcut-icon shortcut-icon--updates">✧</span><span>Updates</span></button>
+            <button type="button" data-view-link="lfg"><span class="shortcut-icon shortcut-icon--lfg">＋</span><span>Find players</span></button>
             <button type="button" data-view-link="groups"><span class="shortcut-icon shortcut-icon--groups">◎</span><span>Communities</span></button>
           </div>
         </section>
@@ -140,6 +143,7 @@
       </section>
       <section class="workspace secondary-view" id="view-games" role="tabpanel" aria-label="Games" data-panel="games" hidden><div class="games-switch" role="tablist" aria-label="Games and groups"><button class="is-current" type="button" role="tab" aria-selected="true" data-view-link="games">Games</button><button type="button" role="tab" aria-selected="false" data-view-link="groups">Communities</button></div><div class="page-heading"><div><p class="eyebrow eyebrow--cyan">YOUR NEXT MAIN</p><h1>Games<span class="heading-period">.</span></h1><p class="subheading">Find your next obsession.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art">⌘</span><h2>Choose your games</h2><p>Sign in to save your favorites and tune your feed to what you play.</p><button class="button button--primary" type="button" data-action="signin">Sign in to explore</button></div></section>
       <section class="workspace secondary-view" id="view-updates" role="tabpanel" aria-label="Game updates" data-panel="updates" hidden><div class="page-heading"><div><p class="eyebrow eyebrow--amber">PATCH NOTES & PLAYER TAKES</p><h1>Game updates<span class="heading-period">.</span></h1><p class="subheading">What’s new in your worlds.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art placeholder-art--amber">✺</span><h2>Fresh drops, together</h2><p>Follow games to see their updates and the conversations around them.</p><button class="button button--primary" type="button" data-action="signin">Sign in to follow games</button></div></section>
+      <section class="workspace secondary-view" id="view-lfg" role="tabpanel" aria-label="Find players" data-panel="lfg" hidden><div id="lfg-root" class="lfg-root"></div></section>
       <section class="workspace secondary-view" id="view-groups" role="tabpanel" aria-label="Groups" data-panel="groups" hidden><div class="games-switch" role="tablist" aria-label="Games and groups"><button class="is-current" type="button" role="tab" aria-selected="true" data-view-link="games">Games</button><button type="button" role="tab" aria-selected="false" data-view-link="groups">Communities</button></div><div class="page-heading"><div><p class="eyebrow eyebrow--green">YOUR PEOPLE, YOUR LOBBY</p><h1>Communities<span class="heading-period">.</span></h1><p class="subheading">Find your people by what you play.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art placeholder-art--green">◎</span><h2>Pull up a chair</h2><p>Game communities are where plans turn into sessions.</p><button class="button button--primary" type="button" data-action="signin">Sign in to discover groups</button></div></section>
       <section class="workspace secondary-view" id="view-friends" role="tabpanel" aria-label="Friends" data-panel="friends" hidden><div class="page-heading"><div><p class="eyebrow eyebrow--pink">YOUR PLAYER TWO (AND THREE)</p><h1>Friends<span class="heading-period">.</span></h1><p class="subheading">Good games are better shared.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art placeholder-art--pink">♡</span><h2>Your squad is waiting</h2><p>Add friends, share game nights, and keep the conversation going.</p><button class="button button--primary" type="button" data-action="signin">Sign in to find friends</button></div></section>
       <section class="workspace secondary-view" id="view-inbox" role="tabpanel" aria-label="Inbox" data-panel="inbox" hidden>

@@ -1,0 +1,99 @@
+/* Find players (LFG). Flat cards, same tokens as the rest of the app. */
+.lfg-root { display: grid; gap: 16px; padding-bottom: 24px; }
+.lfg-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lfg-head h1 { margin: 0; }
+.lfg-head .subheading { margin: 4px 0 0; }
+.lfg-primary { min-height: 44px; padding: 0 20px; border: 0; border-radius: 999px; background: var(--accent, #5a3fd6); color: #fff; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; transition: transform .1s, opacity .15s; }
+.lfg-primary:hover { opacity: .92; }
+.lfg-primary:active { transform: scale(.97); }
+.lfg-primary:disabled, .lfg-small:disabled, .lfg-ghost:disabled { opacity: .55; cursor: default; }
+.lfg-primary--small { min-height: 38px; padding: 0 16px; font-size: 13px; }
+
+.lfg-tabs { display: flex; gap: 6px; padding: 4px; width: fit-content; border: 1px solid var(--border, #e6e8ee); border-radius: 999px; background: var(--card, #fff); }
+.lfg-tab { min-height: 36px; padding: 0 16px; border: 0; border-radius: 999px; background: none; color: var(--muted, #667085); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.lfg-tab.is-active { background: var(--accent, #5a3fd6); color: #fff; }
+
+.lfg-body { display: grid; gap: 14px; }
+.lfg-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.lfg-select { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--border, #e6e8ee); border-radius: 12px; background: var(--card, #fff); color: var(--text, #14171f); font: inherit; font-size: 14px; }
+.lfg-select--full { min-height: 46px; font-size: 16px; }
+.lfg-select:focus, .lfg-input:focus { outline: none; border-color: var(--accent, #5a3fd6); box-shadow: 0 0 0 3px rgb(90 63 214 / 15%); }
+.lfg-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+
+.lfg-card { display: grid; gap: 10px; align-content: start; padding: 16px; border: 1px solid var(--border, #e6e8ee); border-radius: 18px; background: var(--card, #fff); }
+.lfg-card.is-mine { border-color: rgb(90 63 214 / 35%); }
+.lfg-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lfg-who { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.lfg-avatar { flex: none; display: grid; place-items: center; width: 38px; height: 38px; overflow: hidden; border-radius: 50%; background: linear-gradient(135deg, #7c5cff, #2dd4bf); color: #fff; font-weight: 700; }
+.lfg-who-text { display: grid; min-width: 0; }
+.lfg-who-text strong, .lfg-who-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lfg-who-text strong { font-size: 14px; }
+.lfg-who-text span { color: var(--muted, #667085); font-size: 12px; }
+.lfg-game { margin: 0; font-size: 18px; line-height: 1.2; }
+.lfg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lfg-chip { display: inline-flex; align-items: center; min-height: 26px; padding: 0 10px; border-radius: 999px; background: var(--pc-soft, #f1f2f7); color: var(--text, #14171f); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.lfg-chip.is-spots { background: rgb(90 63 214 / 12%); color: var(--accent, #5a3fd6); }
+.lfg-chip.is-method { background: none; border: 1px dashed var(--border, #d6d9e2); color: var(--muted, #667085); }
+.lfg-chip.is-status.is-open, .lfg-chip.is-status.is-accepted { background: #e6f6ec; color: #17653a; }
+.lfg-chip.is-status.is-full { background: #fff3d6; color: #8a5a00; }
+.lfg-chip.is-status.is-closed, .lfg-chip.is-status.is-expired, .lfg-chip.is-status.is-declined { background: var(--pc-soft, #f1f2f7); color: var(--muted, #667085); }
+.lfg-card-note { margin: 0; line-height: 1.45; overflow-wrap: anywhere; }
+.lfg-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.lfg-muted, .lfg-note { color: var(--muted, #667085); font-size: 13px; margin: 0; }
+.lfg-section { margin: 8px 0 0; font-size: 15px; }
+
+.lfg-reveal { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--pc-soft, #f1f2f7); }
+.lfg-reveal-label { color: var(--muted, #667085); font-size: 12px; font-weight: 600; width: 100%; }
+.lfg-reveal-value { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+a.lfg-reveal-value { color: var(--accent, #5a3fd6); }
+
+.lfg-small, .lfg-ghost { min-height: 34px; padding: 0 14px; border: 1px solid var(--border, #e6e8ee); border-radius: 999px; background: var(--card, #fff); color: var(--text, #14171f); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.lfg-ghost { border-color: transparent; background: none; color: var(--muted, #667085); }
+.lfg-small:hover, .lfg-ghost:hover { background: var(--pc-soft, #f1f2f7); }
+.lfg-accept { border-color: transparent; background: var(--accent, #5a3fd6); color: #fff; }
+.lfg-accept:hover { background: var(--accent, #5a3fd6); opacity: .92; }
+.lfg-danger { color: #b42318; }
+.lfg-row { display: flex; justify-content: flex-end; gap: 8px; }
+.lfg-row--wrap { justify-content: flex-start; flex-wrap: wrap; }
+.lfg-requests { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border, #e6e8ee); }
+.lfg-requests[hidden] { display: none; }
+.lfg-request { display: flex; align-items: center; gap: 8px; }
+.lfg-request .lfg-who { flex: 1; }
+
+.lfg-ask { display: grid; gap: 8px; width: 100%; }
+.lfg-input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border, #e6e8ee); border-radius: 12px; background: var(--page-bg, #fff); color: var(--text, #14171f); font: inherit; font-size: 16px; }
+.lfg-textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+.lfg-error { margin: 0; color: #b42318; font-size: 13px; }
+.lfg-error[hidden] { display: none; }
+.lfg-empty { display: grid; gap: 6px; justify-items: center; padding: 36px 16px; text-align: center; border: 1px dashed var(--border, #d6d9e2); border-radius: 18px; color: var(--muted, #667085); }
+.lfg-empty strong { color: var(--text, #14171f); }
+
+/* Composer sheet */
+body.lfg-open { overflow: hidden; }
+.lfg-overlay { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 16px; background: rgb(15 18 28 / 48%); }
+.lfg-sheet { display: grid; gap: 12px; width: min(560px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 18px; border-radius: 22px; background: var(--card, #fff); color: var(--text, #14171f); box-shadow: 0 24px 70px rgb(15 18 28 / 30%); overscroll-behavior: contain; }
+.lfg-sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.lfg-sheet-head h2 { margin: 0; font-size: 18px; }
+.lfg-x { width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--pc-soft, #f1f2f7); color: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
+.lfg-field { display: grid; gap: 6px; }
+.lfg-field[hidden] { display: none; }
+.lfg-label { font-size: 13px; font-weight: 700; }
+.lfg-help { color: var(--muted, #667085); font-size: 12px; line-height: 1.4; }
+.lfg-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.lfg-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.lfg-methods { display: flex; flex-wrap: wrap; gap: 6px; }
+.lfg-method { min-height: 38px; padding: 0 14px; border: 1px solid var(--border, #e6e8ee); border-radius: 999px; background: var(--card, #fff); color: var(--text, #14171f); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.lfg-method.is-active { border-color: var(--accent, #5a3fd6); background: rgb(90 63 214 / 10%); color: var(--accent, #5a3fd6); }
+
+@media (max-width: 640px) {
+  .lfg-filters { grid-template-columns: 1fr 1fr; }
+  .lfg-filters .lfg-filter:first-child { grid-column: 1 / -1; }
+  .lfg-grid3 { grid-template-columns: 1fr 1fr; }
+  .lfg-grid3 > :last-child { grid-column: 1 / -1; }
+  .lfg-overlay { align-items: end; padding: 0; }
+  .lfg-sheet { width: 100%; max-height: 92dvh; border-radius: 22px 22px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+}
+.shortcut-icon--lfg { color: #5a3fd6; background: #efeafd; }
+html[data-theme="dark"] .shortcut-icon--lfg { color: #c7b9ff; background: #2a2540; }
+html[data-theme="dark"] .lfg-chip.is-status.is-open, html[data-theme="dark"] .lfg-chip.is-status.is-accepted { background: #16352a; color: #8fe0b0; }
+html[data-theme="dark"] .lfg-chip.is-status.is-full { background: #3a2f12; color: #f2c96b; }

@@ -1,0 +1,43 @@
+/* Menu drawer + the three-bar button. Flat surface, same tokens as the app. */
+.topbar__left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.menu-toggle { flex: none; }
+.menu-toggle svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+html.dr-lock { overflow: hidden; }
+.dr-overlay { position: fixed; inset: 0; z-index: 120; background: rgb(15 18 28 / 46%); opacity: 0; transition: opacity .2s ease; }
+.dr-overlay.is-open { opacity: 1; }
+.dr-panel {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 121; display: flex; flex-direction: column;
+  width: min(320px, 86vw); background: var(--card, #fff); color: var(--text, #14171f);
+  border-right: 1px solid var(--border, #e6e8ee); box-shadow: 18px 0 48px rgb(15 18 28 / 18%);
+  transform: translateX(-102%); transition: transform .22s ease;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.dr-panel.is-open { transform: none; }
+.dr-head { display: flex; align-items: center; gap: 8px; padding: 14px 12px 10px 16px; }
+.dr-me { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 4px; border: 0; border-radius: 14px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.dr-me:hover { background: var(--pc-soft, #f1f2f7); }
+.dr-avatar { flex: none; display: grid; place-items: center; width: 44px; height: 44px; overflow: hidden; border-radius: 50%; background: linear-gradient(135deg, #7c5cff, #2dd4bf); color: #fff; font-weight: 700; }
+.dr-who { display: grid; min-width: 0; }
+.dr-who strong, .dr-who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dr-who span { color: var(--muted, #667085); font-size: 12.5px; }
+.dr-close { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
+.dr-close:hover { background: var(--pc-soft, #f1f2f7); }
+.dr-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 10px 12px; }
+.dr-compose { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 46px; margin: 4px 0 8px; border: 0; border-radius: 14px; background: var(--accent, #5a3fd6); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.dr-compose .dr-icon { stroke: #fff; }
+.dr-group { padding-top: 6px; }
+.dr-title { margin: 8px 10px 4px; color: var(--muted, #667085); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.dr-item { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 46px; padding: 0 12px; border: 0; border-radius: 14px; background: none; color: inherit; font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer; }
+.dr-item:hover { background: var(--pc-soft, #f1f2f7); }
+.dr-item.is-current { background: rgb(90 63 214 / 11%); color: var(--accent, #5a3fd6); }
+.dr-label { flex: 1; min-width: 0; }
+.dr-icon { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.dr-foot { padding: 8px 10px 12px; border-top: 1px solid var(--border, #e6e8ee); }
+.dr-switch { position: relative; flex: none; width: 40px; height: 24px; border-radius: 999px; background: var(--border, #d0d4de); transition: background .15s; }
+.dr-knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 3px rgb(0 0 0 / 25%); }
+.dr-theme[aria-checked="true"] .dr-switch { background: var(--accent, #5a3fd6); }
+.dr-theme[aria-checked="true"] .dr-knob { transform: translateX(16px); }
+.dr-item:focus-visible, .dr-me:focus-visible, .dr-close:focus-visible, .dr-compose:focus-visible { outline: 2px solid var(--accent, #5a3fd6); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .dr-panel, .dr-overlay, .dr-knob, .dr-switch { transition: none; } }
+@media (min-width: 900px) { .dr-panel { width: 340px; } }

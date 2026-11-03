@@ -23,12 +23,15 @@ const CIRCLE_WINDOW_MS = 4 * DAY;
  *  4. Only when the player has run out of unseen posts, bring back older ones
  *     (least recently seen first) and mark where the "caught up" line goes.
  */
+const { blockedEitherWay } = require('./blocks');
+
 function createFeedEngine(models) {
   const { Post, SeenPost, FeedServed, FeedHide, UserInterest, Membership, Community, Game, getFriendIds, Reaction, Repost, Comment, User } = models;
 
   async function loadState(user) {
     const empty = { friendIds: [], learned: null, hiddenPosts: new Set(), mutedAuthors: [], memberSlugs: [], seenAt: new Map(), servedAt: new Map() };
     if (!user) return empty;
+    const blocked = await blockedEitherWay(user._id);
     const [friendIds, learned, hides, memberships, seenRows, servedRows] = await Promise.all([
       getFriendIds(user._id),
       UserInterest.findOne({ user: user._id }).lean(),
@@ -44,7 +47,7 @@ function createFeedEngine(models) {
       friendIds: friendIds.map(String),
       learned,
       hiddenPosts: new Set(hides.filter((row) => row.kind === 'post').map((row) => String(row.target))),
-      mutedAuthors: hides.filter((row) => row.kind === 'author').map((row) => String(row.target)),
+      mutedAuthors: [...new Set([...hides.filter((row) => row.kind === 'author').map((row) => String(row.target)), ...blocked])],
       memberSlugs: communities.map((row) => row.slug),
       seenAt: new Map(seenRows.map((row) => [String(row.post), new Date(row.seenAt).getTime()])),
       servedAt: new Map(servedRows.map((row) => [String(row.post), new Date(row.servedAt).getTime()]))

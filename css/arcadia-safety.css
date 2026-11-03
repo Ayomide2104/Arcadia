@@ -1,0 +1,24 @@
+body.sf-open { overflow: hidden; }
+.sf-overlay { position: fixed; inset: 0; z-index: 130; display: grid; place-items: center; padding: 16px; background: rgb(15 18 28 / 50%); }
+.sf-sheet { display: grid; gap: 12px; width: min(460px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 20px; border-radius: 22px; background: var(--card, #fff); color: var(--text, #14171f); box-shadow: 0 24px 70px rgb(15 18 28 / 30%); }
+.sf-sheet h2 { margin: 0; font-size: 18px; }
+.sf-sub { margin: 0; color: var(--muted, #667085); font-size: 13px; line-height: 1.45; }
+.sf-reasons { display: grid; gap: 4px; }
+.sf-reason { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; border: 1px solid var(--border, #e6e8ee); border-radius: 12px; font-size: 14px; cursor: pointer; }
+.sf-reason:has(input:checked) { border-color: var(--accent, #5a3fd6); background: rgb(90 63 214 / 9%); }
+.sf-reason input { accent-color: var(--accent, #5a3fd6); }
+.sf-input { width: 100%; padding: 10px 12px; resize: vertical; border: 1px solid var(--border, #e6e8ee); border-radius: 12px; background: var(--page-bg, #fff); color: inherit; font: inherit; font-size: 16px; }
+.sf-input:focus { outline: none; border-color: var(--accent, #5a3fd6); box-shadow: 0 0 0 3px rgb(90 63 214 / 15%); }
+.sf-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; line-height: 1.45; }
+.sf-error { margin: 0; color: #b42318; font-size: 13px; }
+.sf-error[hidden] { display: none; }
+.sf-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sf-btn { min-height: 42px; padding: 0 18px; border: 1px solid var(--border, #e6e8ee); border-radius: 999px; background: var(--card, #fff); color: inherit; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+.sf-btn--solid { border-color: transparent; background: var(--accent, #5a3fd6); color: #fff; }
+.sf-btn--danger { border-color: transparent; background: #c0362c; color: #fff; }
+.sf-btn:disabled { opacity: .5; cursor: default; }
+.sf-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.sf-avatar { flex: none; display: grid; place-items: center; width: 38px; height: 38px; overflow: hidden; border-radius: 50%; background: linear-gradient(135deg, #7c5cff, #2dd4bf); color: #fff; font-weight: 700; }
+.sf-who { display: grid; flex: 1; min-width: 0; }
+.sf-who span { color: var(--muted, #667085); font-size: 12px; }
+@media (max-width: 640px) { .sf-overlay { align-items: end; padding: 0; } .sf-sheet { width: 100%; border-radius: 22px 22px 0 0; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); } }

@@ -13,6 +13,9 @@ import { createTrendingGames } from './trendingGames.js';
 import { createShare, postLink } from './share.js';
 import { createNotifications } from './notifications.js';
 import { createSearch } from './search.js';
+import { createLfg } from './lfg.js';
+import { createDrawer } from './drawer.js';
+import { createSafety } from './safety.js';
 import { createThread } from './commentThread.js';
 
 let notifications = null;
@@ -32,7 +35,22 @@ const circle = createCircleStrip({
   setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
   onOpen: (post, trigger) => openPost(post, trigger),
 });
-const feedExtras = createFeedExtras({ api: (path, options) => api(path, options), toast: (message) => toast(message), getUser: () => currentUser });
+const safety = createSafety({
+  api: (path, options) => api(path, options),
+  toast: (message) => toast(message),
+  getUser: () => currentUser,
+  onNeedSignIn: () => { openAuth(); toast('Sign in to do that.'); },
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  onBlocked: () => { selectView('feed'); try { loadFeed(true); } catch { /* feed reloads on next visit */ } },
+});
+
+const feedExtras = createFeedExtras({
+  api: (path, options) => api(path, options),
+  toast: (message) => toast(message),
+  getUser: () => currentUser,
+  onReport: (post) => safety.report({ type: 'post', target: post._id, label: `Post by @${post.author?.username || 'player'}` }),
+  onBlock: (user) => safety.block(user),
+});
 presence.configure({
   api: (path, options) => api(path, options),
   getUser: () => currentUser,
@@ -96,7 +114,10 @@ function openAuth(action = null) {
   if (!dialog.open) dialog.showModal();
 }
 
+let profilePromise = Promise.resolve();
+
 function selectView(view) {
+  document.body.dataset.view = view;
   $$('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== view; });
   $$('[data-view]').forEach((button) => {
     const active = button.dataset.view === view || (view === 'groups' && button.dataset.view === 'games' && button.closest('.mobile-dock'));
@@ -111,7 +132,8 @@ function selectView(view) {
   if (view === 'games') loadGames();
   if (view === 'groups') loadCommunities();
   if (view === 'updates') loadUpdates();
-  if (view === 'profile') renderProfile();
+  if (view === 'lfg') void lfgPage.show();
+  if (view === 'profile') profilePromise = renderProfile();
   if (view === 'friends') void renderFriends();
   if (view === 'inbox') messaging?.openInbox();
 }
@@ -1148,6 +1170,8 @@ function renderDiscussion(items) {
     canReply: () => Boolean(currentUser),
     onNeedSignIn: () => openAuth({ type: 'comment', id: activeCommentsPost?._id }),
     avatar: discussionAvatar,
+    canReport: (comment) => Boolean(currentUser) && comment.author?.username && comment.author.username !== currentUser.username,
+    onReport: (comment) => safety.report({ type: 'comment', target: comment._id, label: `Comment by @${comment.author?.username || 'player'}` }),
     name: (author) => author?.displayName || author?.username || 'Player',
     time: (date) => commentTime({ createdAt: date }),
     submit: async (parent, body) => {
@@ -1281,6 +1305,7 @@ const share = createShare({
 
 const communitiesPage = createCommunities({
   share,
+  onReport: (target) => safety.report(target),
   api,
   getUser: () => currentUser,
   toast,
@@ -1348,6 +1373,18 @@ const onboarding = createOnboarding({
   onFinish: () => { updateSignedInUI(); selectView('feed'); toast('You’re all set.'); },
 });
 
+const lfgPage = createLfg({
+  mount: $('#lfg-root'),
+  api: (path, options) => api(path, options),
+  getUser: () => currentUser,
+  toast,
+  onNeedSignIn: () => { openAuth(); toast('Sign in to find players.'); },
+  setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
+  onMessage: (user) => { if (user) messaging?.openChat(user); },
+  onReport: (post) => safety.report({ type: 'lfg', target: post._id, label: `${post.mode} invite by @${post.author?.username || 'player'}` }),
+});
+
 notifications = createNotifications({
   api: (path, options) => api(path, options),
   getUser: () => currentUser,
@@ -1359,8 +1396,29 @@ notifications = createNotifications({
   },
   onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
   onOpenFriends: () => selectView('friends'),
+  onOpenLfg: (item) => { selectView('lfg'); if (item?.type === 'lfg_request') void lfgPage.openFor('', 'mine'); },
 });
 if (currentUser) notifications.refresh();
+
+// Left menu drawer (three-bar button): every section in one place.
+createDrawer({
+  toggle: $('#menu-toggle'),
+  getUser: () => currentUser,
+  getView: () => document.body.dataset.view || 'feed',
+  actions: {
+    go: (view) => selectView(view),
+    openInvites: () => { selectView('lfg'); void lfgPage.openFor('', 'mine'); },
+    openNotifications: () => $('#notifications-button').click(),
+    openSettings: async () => { selectView('profile'); await profilePromise; renderSettings($('#view-profile')); },
+    compose: () => composer.open({}),
+    signIn: () => openAuth(),
+    signOut: () => $('#auth-open').click(),
+    isDark: () => document.documentElement.dataset.theme === 'dark',
+    toggleTheme: () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'),
+    setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
+  },
+});
+
 
 function startOnboarding() {
   onboarding.start();
@@ -2256,6 +2314,11 @@ if (user.banner && /^https:\/\//i.test(user.banner)) {
       actions.append(chat);
     } else {
          void pfFriendActions(actions, user);
+         const more = uiEl('button', 'button', 'Report'); more.type = 'button';
+         more.addEventListener('click', () => safety.report({ type: 'user', target: user.username, label: `@${user.username}` }));
+         const blockButton = uiEl('button', 'button', 'Block'); blockButton.type = 'button';
+         blockButton.addEventListener('click', () => safety.block(user));
+         actions.append(more, blockButton);
     }
     head.append(avatar, ident, actions);
 
@@ -2778,6 +2841,11 @@ async function renderSettings(host) {
   const mutedList = uiEl('div', 'st-muted');
   muted.append(uiEl('p', 'st-desc', 'Posts from muted players stay out of your feed. Mute someone from the ⋯ menu on any post.'), mutedList);
   page.append(muted);
+  const blockedCard = stCard('Blocked players');
+  const blockedList = uiEl('div', 'st-muted');
+  blockedCard.append(uiEl('p', 'st-desc', 'Blocked players can’t see your posts, message you or send friend requests, and you won’t see theirs. They aren’t told.'), blockedList);
+  page.append(blockedCard);
+  void safety.renderBlockedList(blockedList);
   void (async () => {
     try {
       const data = await api('/posts/hidden/authors');

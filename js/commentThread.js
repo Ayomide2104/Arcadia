@@ -27,6 +27,8 @@ export function createThread({
   time, // (isoDate) => string | Node
   emptyText = 'No comments yet. Start the conversation.',
   onCountChange = () => {},
+  canReport = () => false,
+  onReport = () => {},
 }) {
   let total = 0;
 
@@ -73,6 +75,12 @@ export function createThread({
     const reply = el('button', 'rt-action', 'Reply');
     reply.type = 'button';
     actions.append(reply);
+    if (canReport(comment)) {
+      const flag = el('button', 'rt-action', 'Report');
+      flag.type = 'button';
+      flag.addEventListener('click', () => onReport(comment));
+      actions.append(flag);
+    }
     const slot = el('div', 'rt-reply-slot');
     const kids = el('div', 'rt-children');
 

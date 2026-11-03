@@ -18,6 +18,10 @@ const FeedServed = require('../models/FeedServed');
 const FeedHide = require('../models/FeedHide');
 const UserInterest = require('../models/UserInterest');
 const DailyActive = require('../models/DailyActive');
+const Lfg = require('../models/Lfg');
+const LfgRequest = require('../models/LfgRequest');
+const Block = require('../models/Block');
+const Report = require('../models/Report');
 const cloudinary = require('../config/cloudinary');
 const { removeOwnedImage } = require('./media');
 
@@ -134,6 +138,12 @@ async function deleteUserAndData(userId, { io = null } = {}) {
 
   // 1. Sign them out everywhere and close their live connections.
   await Session.deleteMany({ user: userId });
+  const ownedLfg = await Lfg.find({ author: userId }).select('_id').lean();
+  if (ownedLfg.length) await LfgRequest.deleteMany({ lfg: { $in: ownedLfg.map((item) => item._id) } });
+  await Lfg.deleteMany({ author: userId });
+  await LfgRequest.deleteMany({ user: userId });
+  await Block.deleteMany({ $or: [{ blocker: userId }, { blocked: userId }] });
+  await Report.deleteMany({ reporter: userId });
   if (io) {
     try { io.in(`user:${userId}`).disconnectSockets(true); } catch { /* not connected */ }
   }

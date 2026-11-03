@@ -5,6 +5,7 @@ const Community = require('../models/Community');
 const { optionalAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 
+const { blockedEitherWay } = require('../services/blocks');
 const router = express.Router();
 const searchLimit = rateLimit({ name: 'global-search', max: 240, windowMs: 15 * 60 * 1000 });
 
@@ -22,10 +23,12 @@ router.get('/', searchLimit, optionalAuth, async (req, res, next) => {
     const starts = { $regex: `^${term}`, $options: 'i' };
     const contains = { $regex: term, $options: 'i' };
 
+    const hidden = await blockedEitherWay(req.user?._id);
     const [players, games, communities] = await Promise.all([
       User.find({
         $or: [{ username: starts }, { displayName: contains }],
-        'privacy.profileVisibility': { $ne: 'private' }
+        'privacy.profileVisibility': { $ne: 'private' },
+        _id: { $nin: hidden }
       })
         .select('username displayName avatar bio')
         .sort({ username: 1 })

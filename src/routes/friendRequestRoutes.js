@@ -7,6 +7,7 @@ const { requireAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { notify } = require('../services/notifications');
 
+const { isBlockedBetween } = require('../services/blocks');
 const router = express.Router();
 
 const sendRequestLimit = rateLimit({
@@ -118,6 +119,10 @@ router.post('/:username', sendRequestLimit, async (req, res, next) => {
         success: false,
         error: 'You cannot send a friend request to yourself.'
       });
+    }
+
+    if (await isBlockedBetween(req.user._id, recipient._id)) {
+      return res.status(403).json({ success: false, error: 'You can’t send a friend request to this player.' });
     }
 
     if (recipient.privacy?.friendRequests === 'nobody') {

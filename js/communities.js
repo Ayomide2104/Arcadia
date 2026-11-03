@@ -78,7 +78,7 @@ function backButton(label) {
   return button;
 }
 
-export function createCommunities({ api, getUser, toast, openAuth, gameInfo, navigate, openGame, share }) {
+export function createCommunities({ api, getUser, toast, openAuth, gameInfo, navigate, openGame, share, onReport }) {
   const state = {
     route: { name: 'explore' },
     joined: null, // Map slug -> role, null until loaded
@@ -1302,6 +1302,8 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
       comments,
       canReply: () => Boolean(getUser()),
       onNeedSignIn: () => openAuth({ type: 'community', slug: community.slug }),
+      canReport: (comment) => Boolean(getUser()) && comment.author?.username && comment.author.username !== getUser().username,
+      onReport: (comment) => onReport?.({ type: 'comment', target: comment._id, label: `Comment by @${comment.author?.username || 'player'}` }),
       avatar: (author) => personAvatar(author),
       name: (author) => `u/${author?.username || 'player'}`,
       time: timeAgo,

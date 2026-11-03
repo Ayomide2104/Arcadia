@@ -101,6 +101,8 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/posts', require('./routes/postRoutes'));
 app.use('/api/games', require('./routes/gameRoutes'));
 app.use('/api/search', require('./routes/searchRoutes'));
+app.use('/api/lfg', require('./routes/lfgRoutes'));
+app.use('/api/safety', require('./routes/safetyRoutes'));
 app.use('/api/communities', require('./routes/communityRoutes'));
 app.use('/api/friends', require('./routes/friendRequestRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));

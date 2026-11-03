@@ -10,6 +10,8 @@ const Message = require('../models/Message');
 const Friendship = require('../models/Friendship');
 const DailyActive = require('../models/DailyActive');
 const AdminAction = require('../models/AdminAction');
+const Report = require('../models/Report');
+const Lfg = require('../models/Lfg');
 const cloudinary = require('../config/cloudinary');
 const presence = require('../services/presence');
 const { today } = require('../services/activity');
@@ -333,6 +335,43 @@ router.get('/audit', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+/* ---------------------------- reports ---------------------------- */
+
+router.get('/reports', async (req, res, next) => {
+  try {
+    const status = ['open', 'actioned', 'dismissed'].includes(req.query.status) ? req.query.status : 'open';
+    const rows = await Report.find({ status }).sort({ createdAt: -1 }).limit(60)
+      .populate('reporter', 'username displayName').populate('subject', 'username displayName').lean();
+    const preview = async (row) => {
+      try {
+        if (row.targetType === 'post') { const post = await Post.findById(row.target).select('body title removedAt').lean(); return post ? (post.title ? post.title + ' · ' : '') + (post.body || '(photo post)') : '(deleted)'; }
+        if (row.targetType === 'comment') { const comment = await Comment.findById(row.target).select('body').lean(); return comment ? comment.body : '(deleted)'; }
+        if (row.targetType === 'lfg') { const invite = await Lfg.findById(row.target).select('game mode note').lean(); return invite ? `${invite.game} · ${invite.mode}${invite.note ? ' · ' + invite.note : ''}` : '(expired)'; }
+        const person = await User.findById(row.target).select('username displayName bio').lean(); return person ? `@${person.username}${person.bio ? ' · ' + person.bio : ''}` : '(deleted)';
+      } catch { return ''; }
+    };
+    const items = await Promise.all(rows.map(async (row) => ({
+      id: String(row._id), type: row.targetType, targetId: String(row.target), reason: row.reason, details: row.details, status: row.status, createdAt: row.createdAt,
+      reporter: row.reporter ? { username: row.reporter.username } : null,
+      subject: row.subject ? { username: row.subject.username, displayName: row.subject.displayName || '' } : null,
+      preview: String(await preview(row)).slice(0, 240),
+    })));
+    res.json({ success: true, data: { items } });
+  } catch (error) { next(error); }
+});
+
+router.patch('/reports/:id', async (req, res, next) => {
+  try {
+    if (!validId(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid report.' });
+    const status = req.body?.status;
+    if (!['actioned', 'dismissed', 'open'].includes(status)) return res.status(400).json({ success: false, error: 'Invalid status.' });
+    const report = await Report.findByIdAndUpdate(req.params.id, { $set: { status, reviewedAt: status === 'open' ? null : new Date() } }, { new: true }).lean();
+    if (!report) return res.status(404).json({ success: false, error: 'Report not found.' });
+    await AdminAction.create({ action: 'report_' + status, targetType: 'report', targetId: String(report._id), targetLabel: report.targetType, summary: { reason: report.reason } });
+    res.json({ success: true, data: { id: String(report._id), status } });
+  } catch (error) { next(error); }
 });
 
 module.exports = router;

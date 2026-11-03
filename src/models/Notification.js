@@ -5,11 +5,12 @@ const notificationSchema = new mongoose.Schema({
   actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: {
     type: String,
-    enum: ['friend_request', 'friend_accept', 'like', 'repost', 'comment', 'reply'],
+    enum: ['friend_request', 'friend_accept', 'like', 'repost', 'comment', 'reply', 'lfg_request', 'lfg_accept', 'lfg_decline'],
     required: true
   },
   post: { type: mongoose.Schema.Types.ObjectId, ref: 'Post', default: null },
   comment: { type: mongoose.Schema.Types.ObjectId, ref: 'Comment', default: null },
+  lfg: { type: mongoose.Schema.Types.ObjectId, ref: 'Lfg', default: null },
   // Makes the same event idempotent: a retried request cannot notify twice.
   key: { type: String, required: true, maxlength: 120 },
   readAt: { type: Date, default: null },

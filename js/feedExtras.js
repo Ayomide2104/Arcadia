@@ -1,6 +1,6 @@
 /* Feed extras: the "why you are seeing this" tag, the ... menu (not interested,
    show less, mute) with undo, and the "you're all caught up" divider. */
-export function createFeedExtras({ api, toast, getUser }) {
+export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
   function divider() {
     const node = document.createElement('div');
     node.className = 'feed-divider';
@@ -73,6 +73,9 @@ export function createFeedExtras({ api, toast, getUser }) {
     const entries = [['post', 'Not interested in this post']];
     if (!mine) entries.push(['less', 'Show me less like this'], ['author', `Mute @${post.author.username}`]);
 
+    if (!mine && onReport) entries.push(['report', 'Report post']);
+    if (!mine && onBlock) entries.push(['block', `Block @${post.author.username}`]);
+
     for (const [mode, label] of entries) {
       const item = document.createElement('button');
       item.type = 'button';
@@ -80,6 +83,8 @@ export function createFeedExtras({ api, toast, getUser }) {
       item.textContent = label;
       item.addEventListener('click', async () => {
         menu.hidden = true;
+        if (mode === 'report') { onReport(post); return; }
+        if (mode === 'block') { onBlock(post.author); return; }
         try {
           await api(`/posts/${post._id}/hide`, { method: 'POST', body: JSON.stringify({ mode }) });
           collapse(article, post, mode);

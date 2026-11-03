@@ -23,6 +23,8 @@ function serialize(item) {
         }
       : null,
     postId: post ? String(post._id) : item.post ? String(item.post) : null,
+    lfgId: item.lfg && item.lfg._id ? String(item.lfg._id) : null,
+    lfgGame: item.lfg && item.lfg.game ? item.lfg.game : null,
     snippet: post && post.body ? String(post.body).slice(0, 90) : ''
   };
 }
@@ -45,6 +47,7 @@ router.get('/', async (req, res, next) => {
       .limit(limit + 1)
       .populate('actor', 'username displayName avatar')
       .populate('post', 'body removedAt')
+      .populate('lfg', 'game')
       .lean();
 
     const page = rows.slice(0, limit);
