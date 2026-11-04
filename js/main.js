@@ -18,11 +18,9 @@ import { createDrawer } from './drawer.js';
 import { createSafety } from './safety.js';
 import { createSocial } from './social.js';
 import { initViewport } from './viewport.js';
+import { initPullRefresh } from './pullRefresh.js';
 import { attachMenu } from './popover.js';
 import { createThread } from './commentThread.js';
-
-const $ = (selector, root = document) => root.querySelector(selector);
-const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 let notifications = null;
 
@@ -58,7 +56,7 @@ const social = createSocial({
   setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
   openProfile: (username) => { selectView('profile'); void renderProfile(username); },
   goPoints: (username) => { social.setPointsTarget(username); selectView('points'); },
-  mountPoints: $('#view-points'),
+  mountPoints: document.querySelector('#view-points'),
 });
 
 const feedExtras = createFeedExtras({
@@ -75,8 +73,8 @@ presence.configure({
   onOpenFriends: () => selectView('friends'),
   onNeedSignIn: () => openAuth(),
 });
-// const $ = (selector, root = document) => root.querySelector(selector);
-// const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
 const authForm = $('#auth-form');
 let authMode = 'login';
@@ -1174,9 +1172,9 @@ let activeThread = null;
 let activeEmbeddedPost = null;
 
 // One more comment on the open post: keep every visible counter in step.
-function bumpCommentCount() {
+function bumpCommentCount(delta = 1) {
   if (!activeCommentsPost) return;
-  activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1;
+  activeCommentsPost.commentCount = Math.max(0, (activeCommentsPost.commentCount || 0) + delta);
   const count = activeCommentsPost.commentCount;
   document.querySelector(`#post-${activeCommentsPost._id}`)?._updateComments?.(count);
   activeEmbeddedPost?._updateComments?.(count);
@@ -1200,6 +1198,22 @@ function renderDiscussion(items) {
     canReply: () => Boolean(currentUser),
     onNeedSignIn: () => openAuth({ type: 'comment', id: activeCommentsPost?._id }),
     avatar: discussionAvatar,
+    isOp: (comment) => Boolean(comment.author?.username) && comment.author.username === activeCommentsPost?.author?.username,
+    opLabel: 'Author',
+    voteMode: isCommunityPost(activeCommentsPost) ? 'vote' : 'like',
+    canVote: (comment) => Boolean(currentUser) && Boolean(comment.author?.username) && comment.author.username !== currentUser.username,
+    onVote: async (comment, value) => api(`/posts/${activeCommentsPost._id}/comments/${comment._id}/vote`, { method: 'PUT', body: JSON.stringify({ value }) }),
+    canManage: (comment) => {
+      if (!currentUser || !comment.author?.username) return null;
+      if (comment.author.username === currentUser.username) return { edit: true, delete: true };
+      return activeCommentsPost?.author?.username === currentUser.username ? { delete: true } : null;
+    },
+    onEdit: async (comment, body) => (await api(`/posts/${activeCommentsPost._id}/comments/${comment._id}`, { method: 'PATCH', body: JSON.stringify({ body }) })).comment,
+    onDelete: async (comment) => {
+      const result = await api(`/posts/${activeCommentsPost._id}/comments/${comment._id}`, { method: 'DELETE' });
+      bumpCommentCount(-1);
+      return result;
+    },
     canReport: (comment) => Boolean(currentUser) && comment.author?.username && comment.author.username !== currentUser.username,
     onReport: (comment) => safety.report({ type: 'comment', target: comment._id, label: `Comment by @${comment.author?.username || 'player'}` }),
     name: (author) => author?.displayName || author?.username || 'Player',
@@ -1306,6 +1320,23 @@ const commentsHandle = $('.comments-drag-handle');
 commentsHandle.addEventListener('touchstart', (event) => { commentsTouchStart = event.touches[0].clientY; }, { passive: true });
 commentsHandle.addEventListener('touchend', (event) => { if (commentsTouchStart !== null && event.changedTouches[0].clientY - commentsTouchStart > 75) requestCommentsClose(); commentsTouchStart = null; }, { passive: true });
 initViewport();
+
+// Pull down to refresh the page you're on (content only; never jumps to Home).
+let shownProfile = null;
+async function refreshCurrentView() {
+  const view = document.body.dataset.view || 'feed';
+  if (view === 'feed') await loadFeed(activeFeed);
+  else if (view === 'games') await loadGames();
+  else if (view === 'groups') await loadCommunities();
+  else if (view === 'updates') await loadUpdates();
+  else if (view === 'lfg') await lfgPage.show();
+  else if (view === 'points') await social.renderPoints();
+  else if (view === 'profile') await renderProfile(shownProfile || undefined);
+  else if (view === 'friends') await renderFriends();
+  else if (view === 'inbox') await messaging?.openInbox();
+  if (currentUser) notifications.refresh();
+}
+initPullRefresh({ onRefresh: refreshCurrentView });
 window.addEventListener('popstate', syncCommentsRoute); window.addEventListener('hashchange', syncCommentsRoute);
 if (/^#post\/[a-f\d]{24}$/i.test(location.hash)) window.setTimeout(syncCommentsRoute, 0);
 
@@ -2313,6 +2344,7 @@ if (messaging) {
 }
 
 async function renderProfile(username = currentUser?.username, initialTab = 'posts') {
+  shownProfile = username;
   const host = $('#view-profile'); if (!host) return;
   host.replaceChildren();
   host.append(uiEl('h1', 'sr-only', username ? 'Player profile' : 'Profile'));

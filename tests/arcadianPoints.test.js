@@ -16,6 +16,12 @@ test('points add up across every kind of activity', () => {
   assert.equal(pointsOf({ likes: 0, comments: 0, shares: 0, reposts: 0, downvotes: 3 }), -3);
 });
 
+test('a like on a comment is worth a quarter point', () => {
+  assert.equal(WEIGHTS.commentLike, 0.25);
+  assert.equal(pointsOf({ likes: 0, comments: 0, shares: 0, reposts: 0, downvotes: 0, commentLikes: 4 }), 1);
+  assert.equal(pointsOf({ likes: 1, comments: 0, shares: 0, reposts: 0, downvotes: 0 }), 1);
+});
+
 test('a repost is worth half a point', () => {
   assert.equal(pointsOf({ likes: 0, comments: 0, shares: 0, reposts: 1, downvotes: 0 }), 0.5);
 });

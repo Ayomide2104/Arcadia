@@ -14,6 +14,8 @@ import { setAvatar } from './avatar.js';
 import { openLightbox } from './lightbox.js';
 import { postLink } from './share.js';
 import { createThread } from './commentThread.js';
+import { createPostManager, paintEdited } from './postManage.js';
+import { prepareImage } from './composer.js';
 
 const GENRES = [
   { id: 'sports', label: 'Sports & football' },
@@ -79,6 +81,7 @@ function backButton(label) {
 }
 
 export function createCommunities({ api, getUser, toast, openAuth, gameInfo, navigate, openGame, share, onReport }) {
+  const manager = createPostManager({ api, toast });
   const state = {
     route: { name: 'explore' },
     joined: null, // Map slug -> role, null until loaded
@@ -869,6 +872,16 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     shareButton.addEventListener('click', () => sharePost(post, community));
     foot.append(shareButton);
 
+    if (!feed && getUser() && post.author?.username === getUser().username) {
+      const editButton = el('button', 'cm-post-action cm-post-action--text', 'Edit');
+      editButton.type = 'button';
+      editButton.addEventListener('click', async () => {
+        const saved = await manager.edit(post);
+        if (saved) { post.body = saved.body; post.title = saved.title; post.editedAt = saved.editedAt; paintEdited(card, saved); }
+      });
+      foot.append(editButton);
+    }
+
     if (!feed && ['owner', 'moderator'].includes(role)) {
       const pin = el('button', 'cm-post-action cm-post-action--text', post.pinnedAt ? 'Unpin' : 'Pin');
       pin.type = 'button';
@@ -983,16 +996,61 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     const submit = el('button', 'cm-btn cm-btn--solid', 'Post');
     submit.type = 'submit';
     row.append(flair, counter, cancel, submit);
-    form.append(title, body, row);
+    // Photos (up to 4), resized in the browser before upload.
+    const MAX_PHOTOS = 4;
+    const picked = [];
+    const strip = el('div', 'cm-photo-strip');
+    strip.hidden = true;
+    const fileInput = el('input');
+    fileInput.type = 'file'; fileInput.accept = 'image/jpeg,image/png,image/webp,image/gif'; fileInput.multiple = true; fileInput.hidden = true;
+    const photoButton = el('button', 'cm-btn cm-btn--ghost cm-photo-btn', 'Add photo');
+    photoButton.type = 'button';
+    const paintStrip = () => {
+      strip.replaceChildren();
+      strip.hidden = !picked.length;
+      photoButton.disabled = picked.length >= MAX_PHOTOS;
+      photoButton.textContent = picked.length ? `Photos ${picked.length}/${MAX_PHOTOS}` : 'Add photo';
+      picked.forEach((entry, index) => {
+        const tile = el('div', 'cm-photo-tile');
+        const img = document.createElement('img');
+        img.src = entry.url; img.alt = `Photo ${index + 1}`;
+        const remove = el('button', 'cm-photo-remove', '×');
+        remove.type = 'button'; remove.setAttribute('aria-label', `Remove photo ${index + 1}`);
+        remove.addEventListener('click', () => { URL.revokeObjectURL(entry.url); picked.splice(index, 1); paintStrip(); });
+        tile.append(img, remove);
+        strip.append(tile);
+      });
+    };
+    photoButton.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      const files = [...fileInput.files].slice(0, MAX_PHOTOS - picked.length);
+      fileInput.value = '';
+      for (const file of files) {
+        try {
+          const prepared = await prepareImage(file);
+          picked.push({ file: prepared, url: URL.createObjectURL(prepared) });
+        } catch (error) { toast(error.message || 'That photo could not be added.'); }
+      }
+      paintStrip();
+    });
+    row.prepend(photoButton);
+    form.append(title, body, strip, fileInput, row);
 
     bar.addEventListener('click', () => { bar.hidden = true; form.hidden = false; title.focus(); });
     cancel.addEventListener('click', () => { form.hidden = true; bar.hidden = false; });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!title.value.trim() && !body.value.trim()) { toast('Add a title or some text first.'); return; }
+      if (!title.value.trim() && !body.value.trim() && !picked.length) { toast('Add a title, some text or a photo first.'); return; }
       submit.disabled = true;
       try {
-        const data = await api(`/communities/${community.slug}/posts`, { method: 'POST', body: JSON.stringify({ title: title.value.trim(), body: body.value.trim(), flair: flair.value }) });
+        const payload = new FormData();
+        payload.append('title', title.value.trim());
+        payload.append('body', body.value.trim());
+        payload.append('flair', flair.value);
+        for (const entry of picked) payload.append('photos', entry.file, entry.file.name);
+        const data = await api(`/communities/${community.slug}/posts`, { method: 'POST', body: payload });
+        for (const entry of picked) URL.revokeObjectURL(entry.url);
+        picked.length = 0; paintStrip();
         title.value = body.value = '';
         counter.textContent = '0 / 500';
         form.hidden = true;
@@ -1302,6 +1360,23 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
       comments,
       canReply: () => Boolean(getUser()),
       onNeedSignIn: () => openAuth({ type: 'community', slug: community.slug }),
+      isOp: (comment) => Boolean(comment.author?.username) && comment.author.username === post.author?.username,
+      opLabel: 'OP',
+      voteMode: 'vote',
+      canVote: (comment) => Boolean(getUser()) && Boolean(comment.author?.username) && comment.author.username !== getUser().username,
+      onVote: async (comment, value) => api(`/posts/${post._id}/comments/${comment._id}/vote`, { method: 'PUT', body: JSON.stringify({ value }) }),
+      canManage: (comment) => {
+        const me = getUser();
+        if (!me || !comment.author?.username) return null;
+        if (comment.author.username === me.username) return { edit: true, delete: true };
+        return post.author?.username === me.username ? { delete: true } : null;
+      },
+      onEdit: async (comment, body) => (await api(`/posts/${post._id}/comments/${comment._id}`, { method: 'PATCH', body: JSON.stringify({ body }) })).comment,
+      onDelete: async (comment) => {
+        const result = await api(`/posts/${post._id}/comments/${comment._id}`, { method: 'DELETE' });
+        post.commentCount = Math.max(0, (post.commentCount || 0) - 1);
+        return result;
+      },
       canReport: (comment) => Boolean(getUser()) && comment.author?.username && comment.author.username !== getUser().username,
       onReport: (comment) => onReport?.({ type: 'comment', target: comment._id, label: `Comment by @${comment.author?.username || 'player'}` }),
       avatar: (author) => personAvatar(author),

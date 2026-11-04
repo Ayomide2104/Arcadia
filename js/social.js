@@ -228,6 +228,7 @@ export function createSocial({ api, toast, getUser, onNeedSignIn, setAvatar, ope
     card.append(
       breakdownRow('Likes', '1 point each', b.likes, true),
       breakdownRow('Comments', '3 points each', b.comments, true),
+      breakdownRow('Comment likes', 'A quarter point each', b.commentLikes || { count: 0, points: 0 }, true),
       breakdownRow('Shares', '2 points each', b.shares, true),
       breakdownRow('Reposts', 'Half a point each', b.reposts, true),
       breakdownRow('Community downvotes', 'Minus 1 each', b.downvotes, false),
@@ -248,7 +249,7 @@ export function createSocial({ api, toast, getUser, onNeedSignIn, setAvatar, ope
     rules.append(el('h2', '', 'How it works'));
     const list = el('ul', 'so-rules');
     for (const line of [
-      'Likes, comments, shares and reposts on posts you share to the feed earn points.',
+      'Likes, comments, shares and reposts on posts you share to the feed earn points. Likes on your comments under feed posts earn a quarter point.',
       'Upvotes and comments on community posts don’t add points, but community downvotes take 1 point away each.',
       'Your own likes, comments, shares and reposts never count.',
       'A person’s first 2 comments on a post count, so spamming a thread doesn’t help.',

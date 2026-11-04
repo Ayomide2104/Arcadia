@@ -1,8 +1,10 @@
 /* Feed extras: the "why you are seeing this" tag, the ... menu (not interested,
    show less, mute) with undo, and the "you're all caught up" divider. */
 import { attachMenu } from './popover.js';
+import { createPostManager, paintEdited } from './postManage.js';
 
 export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
+  const manager = createPostManager({ api, toast });
   function divider() {
     const node = document.createElement('div');
     node.className = 'feed-divider';
@@ -72,7 +74,9 @@ export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
     menu.setAttribute('role', 'menu');
 
     const mine = post.author.username === me.username;
-    const entries = [['post', 'Not interested in this post']];
+    const entries = [];
+    if (mine && post.type !== 'repost') entries.push(['edit', 'Edit post'], ['delete', 'Delete post']);
+    entries.push(['post', 'Not interested in this post']);
     if (!mine) entries.push(['less', 'Show me less like this'], ['author', `Mute @${post.author.username}`]);
 
     if (!mine && onReport) entries.push(['report', 'Report post']);
@@ -83,8 +87,21 @@ export function createFeedExtras({ api, toast, getUser, onReport, onBlock }) {
       item.type = 'button';
       item.setAttribute('role', 'menuitem');
       item.textContent = label;
+      if (mode === 'delete' || mode === 'block') item.classList.add('is-danger');
       item.addEventListener('click', async () => {
         popover.hide();
+        if (mode === 'edit') {
+          const saved = await manager.edit(post);
+          if (saved) { post.body = saved.body; post.title = saved.title; post.editedAt = saved.editedAt; paintEdited(article, saved); }
+          return;
+        }
+        if (mode === 'delete') {
+          if (await manager.remove(post)) {
+            article.classList.add('is-removing');
+            window.setTimeout(() => article.remove(), 220);
+          }
+          return;
+        }
         if (mode === 'report') { onReport(post); return; }
         if (mode === 'block') { onBlock(post.author); return; }
         try {

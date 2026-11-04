@@ -23,6 +23,22 @@ const messageSchema = new mongoose.Schema({
   readAt: {
     type: Date,
     default: null
+  },
+  // Reply to a specific earlier message in the same chat.
+  replyTo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message',
+    default: null
+  },
+  // "Delete for me": hidden for these people only.
+  deletedFor: {
+    type: [mongoose.Schema.Types.ObjectId],
+    default: []
+  },
+  // "Delete for everyone": the text is gone for both people.
+  deletedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true,

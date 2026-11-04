@@ -10,6 +10,8 @@ const User = require('../models/User');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { recordCommunityJoin } = require('../services/interests');
+const uploadImage = require('../middleware/imageUpload');
+const { uploadPostPhotos, cleanup: cleanupPhotos } = require('../services/postPhotos');
 const router = express.Router();
 const discoveryLimit = rateLimit({ name: 'community-search', max: 120, windowMs: 15 * 60 * 1000 });
 const communityPostLimit = rateLimit({ name: 'community-post', max: 20, windowMs: 15 * 60 * 1000 });
@@ -473,7 +475,8 @@ router.delete('/:slug/posts/:postId', requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.post('/:slug/posts', requireAuth, communityPostLimit, async (req, res, next) => {
+router.post('/:slug/posts', requireAuth, communityPostLimit, uploadImage.postPhotos, async (req, res, next) => {
+  let uploaded = [];
   try {
     const community = await Community.findOne({ slug: req.params.slug, active: true }).select('_id slug visibility flairs').lean();
     if (!community) return res.status(404).json({ success: false, error: 'Community not found.' });
@@ -484,13 +487,19 @@ router.post('/:slug/posts', requireAuth, communityPostLimit, async (req, res, ne
     const flair = typeof req.body?.flair === 'string' ? req.body.flair.trim() : '';
     if (body.length > 500) return res.status(400).json({ success: false, error: 'Post text can be up to 500 characters.' });
     if (title.length > 120) return res.status(400).json({ success: false, error: 'The title can be up to 120 characters.' });
-    if (!body && !title) return res.status(400).json({ success: false, error: 'Add a title or some text to your post.' });
+    const files = [...(req.files?.photos || []), ...(req.files?.photo || [])].slice(0, uploadImage.MAX_POST_PHOTOS);
+    if (!body && !title && !files.length) return res.status(400).json({ success: false, error: 'Add a title, some text or a photo to your post.' });
     if (flair && !(community.flairs || []).includes(flair)) return res.status(400).json({ success: false, error: 'Choose one of this community’s flairs.' });
-    const post = await Post.create({ author: req.user._id, title, flair, body, destinations: [{ type: 'community', target: community.slug }] });
+    const photos = await uploadPostPhotos(files);
+    uploaded = photos.uploaded;
+    const post = await Post.create({ author: req.user._id, title, flair, body, media: photos.media, destinations: [{ type: 'community', target: community.slug }] });
     await Community.updateOne({ _id: community._id }, { $inc: { postCount: 1 } });
     await post.populate('author', POST_AUTHOR);
     res.status(201).json({ success: true, data: { post } });
-  } catch (error) { next(error); }
+  } catch (error) {
+    await cleanupPhotos(uploaded);
+    next(error);
+  }
 });
 
 // Group chat: channels, messages, reactions and squad calls.

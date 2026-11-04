@@ -1,6 +1,8 @@
 import { setAvatar } from './avatar.js';
 import { presence } from './presence.js';
 import { io } from 'socket.io-client';
+import { attachMenu } from './popover.js';
+import { confirmSheet } from './confirm.js';
 
 /*
   Arcadia messaging.
@@ -62,6 +64,7 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       ${paths}
     </svg>`;
 
+  const ICON_DOTS = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
   const ICON_BACK = icon('<path d="M15 18 9 12l6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>', 22);
   const ICON_SEND = icon('<path d="M12 19V5m0 0-6 6m6-6 6 6" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>', 20);
   const ICON_SEARCH = icon('<circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.9"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>', 18);
@@ -112,7 +115,15 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
   const chatStatus = element('div', 'arc-chat-person-status', '');
   const personText = element('div', 'arc-chat-person-text');
   personText.append(chatName, chatStatus);
-  chatHeading.append(backButton, chatAvatar, personText);
+  const headMore = button('', 'arc-chat-head-more', () => {});
+  headMore.innerHTML = ICON_DOTS;
+  headMore.setAttribute('aria-label', 'Chat options');
+  const headMenu = element('div', 'arc-chat-msg-menu');
+  const deleteChatItem = element('button', 'is-danger', 'Delete chat');
+  deleteChatItem.type = 'button';
+  headMenu.append(deleteChatItem);
+  chatHeading.append(backButton, chatAvatar, personText, headMore);
+  const headPopover = attachMenu(headMore, headMenu);
 
   const messages = element('div', 'arc-chat-messages');
   messages.setAttribute('role', 'log');
@@ -140,7 +151,14 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
 
   const inputWrapper = element('div', 'arc-chat-input-wrapper');
   inputWrapper.append(input, sendButton);
-  composer.append(inputWrapper);
+  const replyBar = element('div', 'arc-chat-replybar');
+  replyBar.hidden = true;
+  const replyText = element('div', 'arc-chat-replybar-text');
+  const replyCancel = button('', 'arc-chat-replybar-x', () => cancelReply());
+  replyCancel.textContent = '×';
+  replyCancel.setAttribute('aria-label', 'Cancel reply');
+  replyBar.append(replyText, replyCancel);
+  composer.append(replyBar, inputWrapper);
 
   panel.append(chatHeading, messages, loadingState, composer);
   panel.hidden = true;
@@ -284,7 +302,48 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       meta.append(receipt);
     }
 
+    if (item.deleted) {
+      bubble.classList.add('is-deleted');
+      text.textContent = 'This message was deleted';
+      text.classList.add('is-deleted');
+    }
+
+    if (!item.deleted && item.replyTo) {
+      const quote = element('button', 'arc-chat-quote');
+      quote.type = 'button';
+      quote.append(
+        element('strong', '', item.replyTo.isMine ? 'You' : (chatName.textContent || 'Them')),
+        element('span', '', item.replyTo.deleted ? 'Message deleted' : item.replyTo.content)
+      );
+      quote.addEventListener('click', () => jumpToMessage(item.replyTo.id));
+      bubble.append(quote);
+    }
+
     bubble.append(text, meta);
+
+    if (!item.deleted && item.id) {
+      const more = element('button', 'arc-chat-msg-more');
+      more.type = 'button';
+      more.innerHTML = ICON_DOTS;
+      more.setAttribute('aria-label', 'Message options');
+      const menu = element('div', 'arc-chat-msg-menu');
+      const popover = attachMenu(more, menu);
+      const add = (label, run, danger = false) => {
+        const entry = element('button', danger ? 'is-danger' : '', label);
+        entry.type = 'button';
+        entry.addEventListener('click', () => { popover.hide(); run(); });
+        menu.append(entry);
+      };
+      add('Reply', () => startReply(item));
+      add('Copy text', async () => {
+        try { await navigator.clipboard.writeText(item.content || ''); toast('Copied'); }
+        catch { toast('Could not copy.'); }
+      });
+      add('Delete for me', () => void deleteMessage(item, 'me', row), true);
+      if (item.isMine) add('Delete for everyone', () => void deleteMessage(item, 'everyone', row), true);
+      bubble.append(more);
+    }
+
     row.append(bubble);
     messages.append(row);
 
@@ -367,9 +426,11 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       const bottom = element('span', 'arc-chat-list-bottom');
       const last = conversation.lastMessage;
       const mineLast = last ? normalizeMessage(last).isMine : false;
-      const previewText = last?.content
-        ? `${mineLast ? 'You: ' : ''}${last.content}`
-        : 'Start a conversation';
+      const previewText = last?.deleted
+        ? 'Message deleted'
+        : last?.content
+          ? `${mineLast ? 'You: ' : ''}${last.content}`
+          : 'Start a conversation';
       bottom.append(element('span', 'arc-chat-list-preview', previewText));
 
       if (unread) {
@@ -560,6 +621,82 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
     }
   }
 
+  /* ---------- Reply and delete ---------- */
+
+  let replyingTo = null;
+
+  function startReply(item) {
+    replyingTo = { id: item.id, mine: item.isMine, content: item.content };
+    replyText.replaceChildren(
+      element('strong', '', `Replying to ${item.isMine ? 'yourself' : (chatName.textContent || 'them')}`),
+      element('span', '', String(item.content || '').slice(0, 140))
+    );
+    replyBar.hidden = false;
+    input.focus();
+  }
+
+  function cancelReply() {
+    replyingTo = null;
+    replyBar.hidden = true;
+    replyText.replaceChildren();
+  }
+
+  function jumpToMessage(id) {
+    const target = id ? messages.querySelector(`[data-message-id="${CSS.escape(String(id))}"]`) : null;
+    if (!target) { toast('That message is further up. Scroll up to load older messages.'); return; }
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.classList.add('is-flash');
+    window.setTimeout(() => target.classList.remove('is-flash'), 1400);
+  }
+
+  function showDeleted(row) {
+    row.querySelector('.arc-chat-msg-more')?.remove();
+    row.querySelector('.arc-chat-quote')?.remove();
+    const bubble = row.querySelector('.arc-chat-bubble');
+    const text = row.querySelector('.arc-chat-message-text');
+    bubble?.classList.add('is-deleted');
+    if (text) { text.textContent = 'This message was deleted'; text.classList.add('is-deleted'); }
+  }
+
+  async function deleteMessage(item, scope, row) {
+    const everyone = scope === 'everyone';
+    const ok = await confirmSheet({
+      title: everyone ? 'Delete for everyone?' : 'Delete for you?',
+      message: everyone ? 'The message is removed for both of you. This can’t be undone.' : 'It disappears from your chat only. The other person still sees it.',
+      confirmLabel: 'Delete'
+    });
+    if (!ok || !activeUsername) return;
+    try {
+      await api(`/messages/${encodeURIComponent(activeUsername)}/${encodeURIComponent(item.id)}?scope=${scope}`, { method: 'DELETE' });
+      if (replyingTo?.id === item.id) cancelReply();
+      if (everyone) showDeleted(row); else row.remove();
+      void refreshConversations(true);
+    } catch (error) {
+      toast(error.message || 'Could not delete the message.');
+    }
+  }
+
+  async function deleteChat() {
+    if (!activeUsername) return;
+    const username = activeUsername;
+    const ok = await confirmSheet({
+      title: 'Delete this chat?',
+      message: 'The conversation is removed from your list. The other person keeps their copy, and new messages will start it again.',
+      confirmLabel: 'Delete chat'
+    });
+    if (!ok) return;
+    try {
+      await api(`/messages/${encodeURIComponent(username)}`, { method: 'DELETE' });
+      cancelReply();
+      closeChat();
+      await refreshConversations(true);
+      toast('Chat deleted');
+    } catch (error) {
+      toast(error.message || 'Could not delete the chat.');
+    }
+  }
+  deleteChatItem.addEventListener('click', () => { headPopover.hide(); void deleteChat(); });
+
   async function sendMessage(event) {
     event.preventDefault();
 
@@ -574,10 +711,11 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
 
       const result = await api(`/messages/${encodeURIComponent(username)}`, {
         method: 'POST',
-        body: JSON.stringify({ content })
+        body: JSON.stringify(replyingTo ? { content, replyTo: replyingTo.id } : { content })
       });
 
       if (activeUsername !== username) return;
+      cancelReply();
 
       // Drop the "say hi" placeholder once a real message arrives
       messages.querySelector('.arc-chat-first')?.remove();
@@ -596,6 +734,12 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       syncSendState();
       input.focus();
     }
+  }
+
+  function handleDeletedMessage(payload) {
+    const row = payload?.id ? messages.querySelector(`[data-message-id="${CSS.escape(String(payload.id))}"]`) : null;
+    if (row) showDeleted(row);
+    void refreshConversations(true);
   }
 
   function handleIncomingMessage(rawMessage) {
@@ -695,6 +839,7 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
       socket.on('presence:update', (payload) => onPresence?.(payload));
 
       socket.on('message:new', handleIncomingMessage);
+      socket.on('message:deleted', handleDeletedMessage);
       socket.on('message:read', handleReadReceipt);
 
       socket.on('connect_error', (error) => {
@@ -720,6 +865,7 @@ export function createMessaging({ api, getCurrentUser, toast, onPresence }) {
 
   // Leaves the open conversation and returns to the chat list
   function closeChat() {
+    cancelReply();
     activeUsername = null;
     activeFriend = null;
 

@@ -57,16 +57,44 @@ async function findFriend(username, currentUserId) {
   return { friend };
 }
 
-function serializeMessage(message, currentUserId) {
-  return {
+function serializeMessage(message, currentUserId, replyMap = null) {
+  const deleted = Boolean(message.deletedAt);
+  const out = {
     id: String(message._id),
     sender: String(message.sender),
     recipient: String(message.recipient),
-    content: message.content,
+    content: deleted ? '' : message.content,
     createdAt: message.createdAt,
     readAt: message.readAt,
-    isMine: String(message.sender) === String(currentUserId)
+    isMine: String(message.sender) === String(currentUserId),
+    deleted,
+    replyTo: null
   };
+
+  if (!deleted && message.replyTo && replyMap) {
+    const original = replyMap.get(String(message.replyTo));
+    if (original) {
+      const gone = Boolean(original.deletedAt);
+      out.replyTo = {
+        id: String(original._id),
+        isMine: String(original.sender) === String(currentUserId),
+        deleted: gone,
+        content: gone ? '' : String(original.content).slice(0, 140)
+      };
+    }
+  }
+
+  return out;
+}
+
+// Looks up the messages that a batch of messages are replying to.
+async function loadReplies(messages) {
+  const ids = [...new Set(messages.map((message) => message.replyTo).filter(Boolean).map(String))];
+  if (!ids.length) return new Map();
+  const originals = await Message.find({ _id: { $in: ids } })
+    .select('sender content deletedAt')
+    .lean();
+  return new Map(originals.map((item) => [String(item._id), item]));
 }
 
 // Return recent conversations and their unread counts.
@@ -75,6 +103,7 @@ router.get('/conversations', async (req, res, next) => {
     const userId = req.user._id;
 
     const messages = await Message.find({
+      deletedFor: { $ne: userId },
       $or: [
         { sender: userId },
         { recipient: userId }
@@ -160,7 +189,9 @@ router.get('/unread/count', async (req, res, next) => {
   try {
     const count = await Message.countDocuments({
       recipient: req.user._id,
-      readAt: null
+      readAt: null,
+      deletedFor: { $ne: req.user._id },
+      deletedAt: null
     });
 
     res.json({
@@ -187,6 +218,7 @@ router.get('/:username', async (req, res, next) => {
 
     const friendId = result.friend._id;
     const filter = {
+      deletedFor: { $ne: req.user._id },
       $or: [
         { sender: req.user._id, recipient: friendId },
         { sender: friendId, recipient: req.user._id }
@@ -210,6 +242,7 @@ router.get('/:username', async (req, res, next) => {
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
+    const replyMap = await loadReplies(messages);
 
     res.json({
       success: true,
@@ -222,7 +255,7 @@ router.get('/:username', async (req, res, next) => {
         },
         items: messages
           .reverse()
-          .map((message) => serializeMessage(message, req.user._id)),
+          .map((message) => serializeMessage(message, req.user._id, replyMap)),
         hasMore: messages.length === 50
       }
     });
@@ -255,13 +288,35 @@ router.post('/:username', sendMessageLimit, async (req, res, next) => {
       });
     }
 
+    // A reply must point at a message from this same chat.
+    let replyTo = null;
+    if (req.body?.replyTo) {
+      if (!mongoose.Types.ObjectId.isValid(req.body.replyTo)) {
+        return res.status(400).json({ success: false, error: 'That message can’t be replied to.' });
+      }
+      const original = await Message.findOne({
+        _id: req.body.replyTo,
+        deletedAt: null,
+        deletedFor: { $ne: req.user._id },
+        $or: [
+          { sender: req.user._id, recipient: result.friend._id },
+          { sender: result.friend._id, recipient: req.user._id }
+        ]
+      }).select('_id').lean();
+      if (!original) {
+        return res.status(400).json({ success: false, error: 'That message can’t be replied to.' });
+      }
+      replyTo = original._id;
+    }
+
     const message = await Message.create({
       sender: req.user._id,
       recipient: result.friend._id,
-      content
+      content,
+      replyTo
     });
 
-    const item = serializeMessage(message.toObject(), req.user._id);
+    const item = serializeMessage(message.toObject(), req.user._id, await loadReplies([message]));
 
     // Socket.IO is attached to the Express app in a later step.
     // Persisting messages works even before real-time delivery is enabled.
@@ -280,6 +335,70 @@ router.post('/:username', sendMessageLimit, async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+// Delete one message. ?scope=me hides it for you; ?scope=everyone (your own messages) removes it for both.
+router.delete('/:username/:messageId', async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.messageId)) {
+      return res.status(400).json({ success: false, error: 'Invalid message.' });
+    }
+    const result = await findFriend(req.params.username, req.user._id);
+    if (result.error) {
+      return res.status(result.status).json({ success: false, error: result.error });
+    }
+    const scope = req.query.scope === 'everyone' ? 'everyone' : 'me';
+    const message = await Message.findOne({
+      _id: req.params.messageId,
+      $or: [
+        { sender: req.user._id, recipient: result.friend._id },
+        { sender: result.friend._id, recipient: req.user._id }
+      ]
+    });
+    if (!message) {
+      return res.status(404).json({ success: false, error: 'Message not found.' });
+    }
+
+    if (scope === 'everyone') {
+      if (String(message.sender) !== String(req.user._id)) {
+        return res.status(403).json({ success: false, error: 'You can only delete your own messages for everyone.' });
+      }
+      await Message.updateOne({ _id: message._id }, { $set: { deletedAt: new Date(), content: '[deleted]' } });
+      const io = req.app.get('io');
+      if (io) {
+        const payload = { id: String(message._id), senderUsername: req.user.username, recipientUsername: result.friend.username };
+        io.to(`user:${String(result.friend._id)}`).emit('message:deleted', payload);
+        io.to(`user:${String(req.user._id)}`).emit('message:deleted', payload);
+      }
+    } else {
+      await Message.updateOne({ _id: message._id }, { $addToSet: { deletedFor: req.user._id } });
+    }
+    return res.json({ success: true, data: { id: String(message._id), scope } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Delete a whole chat for you (the other person keeps theirs).
+router.delete('/:username', async (req, res, next) => {
+  try {
+    const result = await findFriend(req.params.username, req.user._id);
+    if (result.error) {
+      return res.status(result.status).json({ success: false, error: result.error });
+    }
+    await Message.updateMany(
+      {
+        $or: [
+          { sender: req.user._id, recipient: result.friend._id },
+          { sender: result.friend._id, recipient: req.user._id }
+        ]
+      },
+      { $addToSet: { deletedFor: req.user._id } }
+    );
+    return res.json({ success: true, data: { cleared: true } });
+  } catch (error) {
+    return next(error);
   }
 });
 

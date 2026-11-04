@@ -1,6 +1,6 @@
 /* Pure rules for Arcadian points (no database), so they are easy to test. */
 
-const WEIGHTS = { like: 1, comment: 3, share: 2, repost: 0.5, downvote: -1 };
+const WEIGHTS = { like: 1, comment: 3, share: 2, repost: 0.5, downvote: -1, commentLike: 0.25 };
 const COMMENT_CAP_PER_PERSON = 2;
 
 const TIERS = [
@@ -26,7 +26,7 @@ function tierFor(points) {
 
 const pointsOf = (counts) => (
   counts.likes * WEIGHTS.like + counts.comments * WEIGHTS.comment + counts.shares * WEIGHTS.share +
-  counts.reposts * WEIGHTS.repost + counts.downvotes * WEIGHTS.downvote
+  counts.reposts * WEIGHTS.repost + counts.downvotes * WEIGHTS.downvote + (counts.commentLikes || 0) * WEIGHTS.commentLike
 );
 
 module.exports = { WEIGHTS, COMMENT_CAP_PER_PERSON, TIERS, tierFor, pointsOf };

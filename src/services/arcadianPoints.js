@@ -17,6 +17,7 @@ const Comment = require('../models/Comment');
 const Repost = require('../models/Repost');
 const Vote = require('../models/Vote');
 const PostShare = require('../models/PostShare');
+const CommentVote = require('../models/CommentVote');
 
 const { WEIGHTS, COMMENT_CAP_PER_PERSON, TIERS, tierFor, pointsOf } = require('./pointsMath');
 const MAX_POSTS = 3000;
@@ -39,11 +40,25 @@ async function tally(userId, since) {
 
   const [likes, comments, shares, reposts, downs] = await Promise.all([
     feedIds.length ? Reaction.aggregate([{ $match: { post: { $in: feedIds }, user: notMe, ...time } }, { $group: { _id: '$post', n: { $sum: 1 } } }]) : [],
-    feedIds.length ? Comment.aggregate([{ $match: { post: { $in: feedIds }, author: notMe, ...time } }, { $group: { _id: { post: '$post', author: '$author' }, n: { $sum: 1 } } }]) : [],
+    feedIds.length ? Comment.aggregate([{ $match: { post: { $in: feedIds }, author: notMe, deletedAt: null, ...time } }, { $group: { _id: { post: '$post', author: '$author' }, n: { $sum: 1 } } }]) : [],
     feedIds.length ? PostShare.aggregate([{ $match: { post: { $in: feedIds }, user: notMe, ...time } }, { $group: { _id: '$post', n: { $sum: 1 } } }]) : [],
     feedIds.length ? Repost.aggregate([{ $match: { post: { $in: feedIds }, user: notMe, ...time } }, { $group: { _id: '$post', n: { $sum: 1 } } }]) : [],
     communityIds.length ? Vote.aggregate([{ $match: { post: { $in: communityIds }, user: notMe, value: -1, ...time } }, { $group: { _id: '$post', n: { $sum: 1 } } }]) : [],
   ]);
+
+  // Likes on the player's own comments under feed posts (community comments don't earn points).
+  const myComments = await Comment.find({ author: userId, deletedAt: null }).sort({ _id: -1 }).limit(MAX_POSTS).select('_id post').lean();
+  let commentLikes = 0;
+  if (myComments.length) {
+    const postIds = [...new Set(myComments.map((row) => String(row.post)))];
+    const parents = await Post.find({ _id: { $in: postIds } }).select('destinations').lean();
+    const communityPosts = new Set(parents.filter((row) => (row.destinations || []).some((item) => item.type === 'community')).map((row) => String(row._id)));
+    const eligible = myComments.filter((row) => !communityPosts.has(String(row.post))).map((row) => row._id);
+    if (eligible.length) {
+      const [row] = await CommentVote.aggregate([{ $match: { comment: { $in: eligible }, value: 1, user: notMe, ...time } }, { $group: { _id: null, n: { $sum: 1 } } }]);
+      commentLikes = row ? row.n : 0;
+    }
+  }
 
   const perPost = new Map();
   const slot = (id) => {
@@ -57,8 +72,8 @@ async function tally(userId, since) {
   for (const row of reposts) slot(row._id).reposts += row.n;
   for (const row of downs) slot(row._id).downvotes += row.n;
 
-  const counts = { likes: 0, comments: 0, shares: 0, reposts: 0, downvotes: 0 };
-  for (const entry of perPost.values()) for (const key of Object.keys(counts)) counts[key] += entry[key];
+  const counts = { likes: 0, comments: 0, shares: 0, reposts: 0, downvotes: 0, commentLikes };
+  for (const entry of perPost.values()) for (const key of ['likes', 'comments', 'shares', 'reposts', 'downvotes']) counts[key] += entry[key];
   return { counts, perPost };
 }
 
@@ -99,6 +114,7 @@ async function getPoints(userId) {
       comments: { count: all.counts.comments, points: all.counts.comments * WEIGHTS.comment },
       shares: { count: all.counts.shares, points: all.counts.shares * WEIGHTS.share },
       reposts: { count: all.counts.reposts, points: all.counts.reposts * WEIGHTS.repost },
+      commentLikes: { count: all.counts.commentLikes, points: all.counts.commentLikes * WEIGHTS.commentLike },
       downvotes: { count: all.counts.downvotes, points: all.counts.downvotes * WEIGHTS.downvote },
     },
     weights: WEIGHTS,

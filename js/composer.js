@@ -40,7 +40,7 @@ function formatSize(bytes) {
 }
 
 /** Resize in the browser: longest side 1600px, WebP (JPEG as a fallback), small file. */
-async function prepareImage(file) {
+export async function prepareImage(file) {
   if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) throw new Error('Choose a JPEG, PNG, WebP or GIF image.');
   // Animated GIFs would lose their animation on a canvas, so they go up as they are.
   if (file.type === 'image/gif') {

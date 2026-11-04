@@ -4,6 +4,7 @@ const Post = require('../models/Post');
 const cloudinary = require('../config/cloudinary');
 const uploadImage = require('../middleware/imageUpload');
 const Comment = require('../models/Comment');
+const CommentVote = require('../models/CommentVote');
 const Reaction = require('../models/Reaction');
 const Vote = require('../models/Vote');
 const Repost = require('../models/Repost');
@@ -31,6 +32,7 @@ const feedEngine = createFeedEngine({
 
 const { blockedEitherWay } = require('../services/blocks');
 const { getFollowingIds } = require('../services/follows');
+const { isBlockedBetween } = require('../services/blocks');
 const router = express.Router();
 
 const validId = (id) => mongoose.Types.ObjectId.isValid(id);
@@ -905,10 +907,30 @@ router.get('/:id/comments', optionalAuth, async (req, res, next) => {
       .populate('author', 'username displayName avatar')
       .lean();
 
+    const commentIds = comments.map((comment) => comment._id);
+    const [tallies, mine] = commentIds.length
+      ? await Promise.all([
+        CommentVote.aggregate([{ $match: { comment: { $in: commentIds } } }, { $group: { _id: '$comment', score: { $sum: '$value' }, ups: { $sum: { $cond: [{ $eq: ['$value', 1] }, 1, 0] } } } }]),
+        req.user ? CommentVote.find({ user: req.user._id, comment: { $in: commentIds } }).select('comment value').lean() : [],
+      ])
+      : [[], []];
+    const tallyById = new Map(tallies.map((row) => [String(row._id), row]));
+    const myById = new Map(mine.map((row) => [String(row.comment), row.value]));
+    for (const comment of comments) {
+      const tally = tallyById.get(String(comment._id));
+      comment.score = tally ? tally.score : 0;
+      comment.likeCount = tally ? tally.ups : 0;
+      comment.myVote = myById.get(String(comment._id)) || 0;
+    }
+
+    const items = comments.map((comment) => (comment.deletedAt
+      ? { _id: comment._id, post: comment.post, parent: comment.parent, createdAt: comment.createdAt, body: '[deleted]', author: null, deleted: true, score: 0, likeCount: 0, myVote: 0 }
+      : comment));
+
     return res.json({
       success: true,
       data: {
-        items: comments,
+        items,
         nextCursor:
           comments.length === limit
             ? String(comments.at(-1)._id)
@@ -1040,5 +1062,108 @@ router.post(
     }
   }
 );
+
+/* ----------------------- edit and delete ----------------------- */
+
+const editLimit = rateLimit({ name: 'content-edit', max: 80, windowMs: 60 * 60 * 1000 });
+
+// PATCH /api/posts/:id  { body?, title? }  (author only)
+router.patch('/:id', requireAuth, editLimit, async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid post.' });
+    const post = await Post.findOne({ _id: req.params.id, removedAt: null });
+    if (!post || post.type !== 'original') return res.status(404).json({ success: false, error: 'Post not found.' });
+    if (String(post.author) !== String(req.user._id)) return res.status(403).json({ success: false, error: 'You can only edit your own posts.' });
+
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : post.body;
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : post.title;
+    if (body.length > 500) return res.status(400).json({ success: false, error: 'Post text cannot exceed 500 characters.' });
+    if (title.length > 120) return res.status(400).json({ success: false, error: 'Titles can be up to 120 characters.' });
+    if (!body && !title && !(post.media || []).length) return res.status(400).json({ success: false, error: 'A post needs some text or a photo.' });
+
+    if (body !== post.body || title !== post.title) {
+      post.body = body;
+      post.title = title;
+      post.editedAt = new Date();
+      await post.save();
+    }
+    return res.json({ success: true, data: { post: { _id: String(post._id), body: post.body, title: post.title, editedAt: post.editedAt } } });
+  } catch (error) { return next(error); }
+});
+
+// DELETE /api/posts/:id  (author only)
+router.delete('/:id', requireAuth, editLimit, async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, error: 'Invalid post.' });
+    const post = await Post.findOne({ _id: req.params.id, removedAt: null }).select('author destinations').lean();
+    if (!post) return res.status(404).json({ success: false, error: 'Post not found.' });
+    if (String(post.author) !== String(req.user._id)) return res.status(403).json({ success: false, error: 'You can only delete your own posts.' });
+    await Post.updateOne({ _id: post._id, removedAt: null }, { $set: { removedAt: new Date(), removedBy: req.user._id } });
+    const slugs = (post.destinations || []).filter((item) => item.type === 'community' && item.target).map((item) => item.target);
+    if (slugs.length) await Community.updateMany({ slug: { $in: slugs }, postCount: { $gt: 0 } }, { $inc: { postCount: -1 } });
+    return res.json({ success: true, data: { removed: true } });
+  } catch (error) { return next(error); }
+});
+
+// PATCH /api/posts/:id/comments/:commentId  { body }  (comment author only)
+router.patch('/:id/comments/:commentId', requireAuth, editLimit, async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id) || !mongoose.Types.ObjectId.isValid(req.params.commentId)) return res.status(400).json({ success: false, error: 'Invalid comment.' });
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!body) return res.status(400).json({ success: false, error: 'A comment can’t be empty.' });
+    if (body.length > 1000) return res.status(400).json({ success: false, error: 'Comments can be up to 1000 characters.' });
+    const comment = await Comment.findOne({ _id: req.params.commentId, post: req.params.id, deletedAt: null });
+    if (!comment) return res.status(404).json({ success: false, error: 'Comment not found.' });
+    if (String(comment.author) !== String(req.user._id)) return res.status(403).json({ success: false, error: 'You can only edit your own comments.' });
+    if (comment.body !== body) { comment.body = body; comment.editedAt = new Date(); await comment.save(); }
+    return res.json({ success: true, data: { comment: { _id: String(comment._id), body: comment.body, editedAt: comment.editedAt } } });
+  } catch (error) { return next(error); }
+});
+
+// DELETE /api/posts/:id/comments/:commentId  (comment author, or the post's author)
+router.delete('/:id/comments/:commentId', requireAuth, editLimit, async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id) || !mongoose.Types.ObjectId.isValid(req.params.commentId)) return res.status(400).json({ success: false, error: 'Invalid comment.' });
+    const [comment, post] = await Promise.all([
+      Comment.findOne({ _id: req.params.commentId, post: req.params.id, deletedAt: null }).select('author').lean(),
+      Post.findOne({ _id: req.params.id }).select('author').lean(),
+    ]);
+    if (!comment || !post) return res.status(404).json({ success: false, error: 'Comment not found.' });
+    const mine = String(comment.author) === String(req.user._id);
+    const owner = String(post.author) === String(req.user._id);
+    if (!mine && !owner) return res.status(403).json({ success: false, error: 'You can’t delete this comment.' });
+    const replies = await Comment.exists({ parent: comment._id, deletedAt: null });
+    await Comment.updateOne({ _id: comment._id }, { $set: { deletedAt: new Date(), body: '[deleted]' } });
+    await Post.updateOne({ _id: post._id, commentCount: { $gt: 0 } }, { $inc: { commentCount: -1 } });
+    return res.json({ success: true, data: { deleted: true, hasReplies: Boolean(replies) } });
+  } catch (error) { return next(error); }
+});
+
+// PUT /api/posts/:id/comments/:commentId/vote  { value: 1 | 0 | -1 }
+// Feed comments can be liked (1) or unliked (0). Community comments also allow downvotes (-1).
+const commentVoteLimit = rateLimit({ name: 'comment-vote', max: 200, windowMs: 60 * 60 * 1000 });
+
+router.put('/:id/comments/:commentId/vote', requireAuth, commentVoteLimit, async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id) || !mongoose.Types.ObjectId.isValid(req.params.commentId)) return res.status(400).json({ success: false, error: 'Invalid comment.' });
+    const value = Number(req.body?.value);
+    if (![-1, 0, 1].includes(value)) return res.status(400).json({ success: false, error: 'Invalid vote.' });
+    const [post, comment] = await Promise.all([
+      Post.findOne({ _id: req.params.id, removedAt: null }).select('destinations').lean(),
+      Comment.findOne({ _id: req.params.commentId, post: req.params.id, deletedAt: null }).select('author').lean(),
+    ]);
+    if (!post || !comment) return res.status(404).json({ success: false, error: 'Comment not found.' });
+    if (String(comment.author) === String(req.user._id)) return res.status(400).json({ success: false, error: 'You can’t vote on your own comment.' });
+    if (await isBlockedBetween(req.user._id, comment.author)) return res.status(403).json({ success: false, error: 'You can’t vote on this comment.' });
+    const inCommunity = (post.destinations || []).some((item) => item.type === 'community');
+    if (value === -1 && !inCommunity) return res.status(400).json({ success: false, error: 'Only community comments can be downvoted.' });
+
+    if (value === 0) await CommentVote.deleteOne({ comment: comment._id, user: req.user._id });
+    else await CommentVote.updateOne({ comment: comment._id, user: req.user._id }, { $set: { value, post: post._id } }, { upsert: true });
+
+    const [tally] = await CommentVote.aggregate([{ $match: { comment: comment._id } }, { $group: { _id: null, score: { $sum: '$value' }, ups: { $sum: { $cond: [{ $eq: ['$value', 1] }, 1, 0] } } } }]);
+    return res.json({ success: true, data: { score: tally ? tally.score : 0, likeCount: tally ? tally.ups : 0, myVote: value } });
+  } catch (error) { return next(error); }
+});
 
 module.exports = router;

@@ -23,6 +23,7 @@ const postSchema = new mongoose.Schema({
   type: { type: String, enum: ['original', 'repost'], default: 'original' },
   repostOf: { type: mongoose.Schema.Types.ObjectId, ref: 'Post', default: null },
   removedAt: { type: Date, default: null },
+  editedAt: { type: Date, default: null },
   removedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   media: { type: [mongoose.Schema.Types.Mixed], default: [] },
   likeCount: { type: Number, default: 0, min: 0 },

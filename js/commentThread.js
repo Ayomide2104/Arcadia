@@ -7,6 +7,11 @@
    The caller supplies how to draw avatars/names/times and how to save a reply, so the
    same code works for both places.                                                      */
 
+import { confirmSheet } from './confirm.js';
+
+const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.600-7.500 10.200-7.500 10.200Z"/></svg>';
+const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 11l6-6 6 6"/></svg>';
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -29,6 +34,14 @@ export function createThread({
   onCountChange = () => {},
   canReport = () => false,
   onReport = () => {},
+  canManage = () => null, // (comment) => { edit, delete } for your own comments
+  onEdit = null, // async (comment, body) => { body, editedAt }
+  onDelete = null, // async (comment) => { hasReplies }
+  isOp = () => false, // is this comment by the person who wrote the post?
+  opLabel = 'OP',
+  voteMode = null, // 'like' (feed comments) or 'vote' (community comments)
+  canVote = () => false,
+  onVote = null, // async (comment, value) => { score, likeCount, myVote }
 }) {
   let total = 0;
 
@@ -60,9 +73,20 @@ export function createThread({
     const body = el('div', 'rt-body');
     const meta = el('div', 'rt-meta');
     const when = time(comment.createdAt);
-    meta.append(el('strong', 'rt-name', name(comment.author)), el('span', 'rt-dot', '·'));
+    const isDeleted = Boolean(comment.deleted);
+    const nameNode = el('strong', 'rt-name', isDeleted ? '[deleted]' : name(comment.author));
+    meta.append(nameNode);
+    if (!isDeleted && isOp(comment)) {
+      const op = el('span', 'rt-op', opLabel);
+      op.title = 'Wrote this post';
+      meta.append(op);
+    }
+    meta.append(el('span', 'rt-dot', '·'));
     if (typeof when === 'string') meta.append(el('span', 'rt-time', when));
     else if (when) { when.classList.add('rt-time'); meta.append(when); }
+    const edited = el('span', 'rt-edited', comment.editedAt ? '(edited)' : '');
+    edited.hidden = !comment.editedAt;
+    meta.append(edited);
     const hidden = el('span', 'rt-hidden');
     const toggle = el('button', 'rt-toggle', '−');
     toggle.type = 'button';
@@ -82,6 +106,112 @@ export function createThread({
       actions.append(flag);
     }
     const slot = el('div', 'rt-reply-slot');
+    if (!isDeleted && voteMode && onVote) {
+      const interactive = canVote(comment);
+      let mine = Number(comment.myVote) || 0;
+      let score = voteMode === 'like' ? Number(comment.likeCount) || 0 : Number(comment.score) || 0;
+      const box = el('div', `rt-votes rt-votes--${voteMode}`);
+      const up = el('button', 'rt-vote rt-vote--up'); up.type = 'button';
+      up.innerHTML = voteMode === 'like' ? HEART : ARROW;
+      const num = el('span', 'rt-vote-num');
+      const down = voteMode === 'vote' ? el('button', 'rt-vote rt-vote--down') : null;
+      if (down) { down.type = 'button'; down.innerHTML = ARROW; }
+      const paint = () => {
+        num.textContent = voteMode === 'vote' ? String(score) : (score > 0 ? String(score) : '');
+        up.classList.toggle('is-on', mine === 1);
+        up.setAttribute('aria-pressed', String(mine === 1));
+        up.setAttribute('aria-label', voteMode === 'like' ? (mine === 1 ? 'Unlike comment' : 'Like comment') : 'Upvote comment');
+        if (down) { down.classList.toggle('is-on', mine === -1); down.setAttribute('aria-pressed', String(mine === -1)); down.setAttribute('aria-label', 'Downvote comment'); }
+        box.hidden = !interactive && !score;
+      };
+      async function cast(target) {
+        if (!canReply()) { onNeedSignIn(); return; }
+        if (!interactive) return;
+        const next = mine === target ? 0 : target;
+        const before = { mine, score };
+        if (voteMode === 'like') score += (next === 1 ? 1 : 0) - (mine === 1 ? 1 : 0);
+        else score += next - mine;
+        mine = next; paint();
+        try {
+          const saved = await onVote(comment, next);
+          if (saved) { score = voteMode === 'like' ? saved.likeCount : saved.score; mine = saved.myVote; comment.myVote = mine; paint(); }
+        } catch { mine = before.mine; score = before.score; paint(); }
+      }
+      up.addEventListener('click', () => cast(1));
+      if (down) down.addEventListener('click', () => cast(-1));
+      if (!interactive) { up.disabled = true; if (down) down.disabled = true; }
+      box.append(up, num);
+      if (down) box.append(down);
+      paint();
+      actions.prepend(box);
+    }
+    const perms = (!isDeleted && canManage(comment)) || {};
+    if (isDeleted) { text.classList.add('is-deleted'); actions.hidden = true; face.textContent = '?'; face.style.backgroundImage = 'none'; }
+
+    if (perms.edit && onEdit) {
+      const editButton = el('button', 'rt-action', 'Edit');
+      editButton.type = 'button';
+      editButton.addEventListener('click', () => {
+        if (body.querySelector('.rt-edit-form')) return;
+        const form = el('form', 'rt-form rt-edit-form');
+        const area = el('textarea', 'rt-input');
+        area.rows = 3; area.maxLength = 1000; area.value = comment.body; area.required = true;
+        area.setAttribute('aria-label', 'Edit your comment');
+        const error = el('p', 'rt-error'); error.hidden = true; error.setAttribute('role', 'alert');
+        const row = el('div', 'rt-form-row');
+        const cancel = el('button', 'rt-btn rt-btn--ghost', 'Cancel'); cancel.type = 'button';
+        const save = el('button', 'rt-btn rt-btn--solid', 'Save'); save.type = 'submit';
+        row.append(cancel, save);
+        form.append(area, error, row);
+        text.hidden = true; actions.hidden = true;
+        text.after(form);
+        area.focus(); area.setSelectionRange(area.value.length, area.value.length);
+        const close = () => { form.remove(); text.hidden = false; actions.hidden = false; };
+        cancel.addEventListener('click', close);
+        area.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const value = area.value.trim();
+          if (!value) return;
+          if (value === comment.body) { close(); return; }
+          save.disabled = true; error.hidden = true;
+          try {
+            const saved = await onEdit(comment, value);
+            comment.body = saved.body ?? value;
+            comment.editedAt = saved.editedAt || new Date().toISOString();
+            text.textContent = comment.body;
+            edited.textContent = '(edited)'; edited.hidden = false;
+            close();
+          } catch (failure) { error.textContent = failure?.message || 'Could not save your change.'; error.hidden = false; save.disabled = false; }
+        });
+      });
+      actions.append(editButton);
+    }
+    if (perms.delete && onDelete) {
+      const deleteButton = el('button', 'rt-action rt-action--danger', 'Delete');
+      deleteButton.type = 'button';
+      deleteButton.addEventListener('click', async () => {
+        const ok = await confirmSheet({ title: 'Delete this comment?', message: 'This can’t be undone. Replies under it will stay.', confirmLabel: 'Delete' });
+        if (!ok) return;
+        deleteButton.disabled = true;
+        try {
+          const result = await onDelete(comment);
+          if (result?.hasReplies || descendants(thread) > 0) {
+            nameNode.textContent = '[deleted]';
+            thread.querySelector(':scope > .rt-body > .rt-meta .rt-op')?.remove();
+            text.textContent = '[deleted]'; text.classList.add('is-deleted'); text.hidden = false;
+            actions.hidden = true; edited.hidden = true;
+            face.textContent = '?'; face.style.backgroundImage = 'none';
+            body.querySelector('.rt-edit-form')?.remove();
+          } else {
+            thread.remove();
+          }
+          total = Math.max(0, total - 1);
+          onCountChange(total);
+        } catch (failure) { deleteButton.disabled = false; window.alert(failure?.message || 'Could not delete the comment.'); }
+      });
+      actions.append(deleteButton);
+    }
     const kids = el('div', 'rt-children');
 
     body.append(meta, text, actions, slot, kids);

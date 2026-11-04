@@ -16,7 +16,8 @@
     "admin:hash": "node scripts/makeAdminHash.js",
     "frontend:dev": "vite --config vite.config.mjs",
     "frontend:build": "vite build --config vite.config.mjs",
-    "frontend:preview": "vite preview --config vite.config.mjs"
+    "frontend:preview": "vite preview --config vite.config.mjs",
+    "smoke": "node --import ./scripts/smoke-register.mjs scripts/smokeInit.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
