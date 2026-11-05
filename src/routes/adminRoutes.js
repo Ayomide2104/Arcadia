@@ -150,6 +150,35 @@ router.get('/online', (req, res) => {
 /* ------------------------------ users ------------------------------ */
 
 router.use('/communities', require('./adminCommunityRoutes'));
+router.use('/games', require('./adminGameRoutes'));
+
+/* ---------------------------- site controls ---------------------------- */
+
+const { getSettings, setSetting } = require('../services/siteSettings');
+
+router.get('/site', async (req, res, next) => {
+  try { res.json({ success: true, data: await getSettings() }); } catch (error) { next(error); }
+});
+
+router.patch('/site', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (Object.hasOwn(body, 'signupsOpen')) {
+      await setSetting('signupsOpen', body.signupsOpen === true);
+      await AdminAction.create({ action: 'site_signups', targetType: 'site', targetLabel: 'sign-ups', summary: { open: body.signupsOpen === true } });
+    }
+    if (Object.hasOwn(body, 'announcement')) {
+      const input = body.announcement || {};
+      const text = String(input.text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 240);
+      const tone = ['info', 'success', 'warning'].includes(input.tone) ? input.tone : 'info';
+      let link = String(input.link ?? '').trim();
+      if (link && !/^https:\/\//i.test(link)) link = '';
+      await setSetting('announcement', { active: Boolean(input.active) && Boolean(text), text, tone, link: link.slice(0, 200), id: String(Date.now()) });
+      await AdminAction.create({ action: 'site_announcement', targetType: 'site', targetLabel: 'announcement', summary: { active: Boolean(input.active) && Boolean(text) } });
+    }
+    res.json({ success: true, data: await getSettings() });
+  } catch (error) { next(error); }
+});
 
 router.get('/users', async (req, res, next) => {
   try {

@@ -29,3 +29,9 @@ Other: `scripts/smoke*.mjs`, `tests/{lfgConfig,arcadianPoints}.test.js`.
 ## Round after that
 - Fonts: `css/arcadia-fonts.css` (declares fonts from `public/fonts`), `js/fonts.js` (catalogue, free vs store tiers, Settings picker); `index.html` links the css and preloads Plus Jakarta Sans; `main.js` calls `initFonts()` and adds a Fonts card in Settings.
 - Full-page community chat: `communities.js` (body class `cc-full`, back buttons), styles at the end of `css/arcadia-fixes.css`.
+
+## Round: loading screen, admin games and site controls
+- Launch screen and slow-load indicator: `css/arcadia-splash.css` (first stylesheet), `js/loading.js`; `index.html` has the `#splash` block at the top of `<body>`; `main.js` wraps `api()` (now `apiCore()` underneath) so slow requests show a bar after 250ms and a card after 1s.
+- Admin: Games page (add/edit/hide games with cover and banner upload) and Site page (announcement banner, pause sign-ups): `admin/admin.js`, `src/routes/adminGameRoutes.js`, `src/routes/adminRoutes.js` (`/site`), `src/models/SiteSetting.js`, `src/services/siteSettings.js`, `src/routes/siteRoutes.js`, `src/middleware/imageUpload.js` (`gameArt`), `src/models/Game.js` (cover/banner fields).
+- Games added by an admin get artwork through `/api/games/art/:slug/:kind`; `getArcadiaGame()` in `main.js` points unknown games there. Built-in games are unchanged.
+- App side: `js/siteBanner.js`; `authRoutes.js` register route honours the sign-ups switch.

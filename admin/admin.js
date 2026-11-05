@@ -34,9 +34,10 @@ function svg(tag, attrs, ...children) {
 
 async function api(path, { method = 'GET', body } = {}) {
   const headers = {};
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
   if (csrf && method !== 'GET') headers['x-admin-csrf'] = csrf;
-  const response = await fetch(`/api/admin${path}`, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await fetch(`/api/admin${path}`, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : (isForm ? body : JSON.stringify(body)) });
   let payload = null;
   try { payload = await response.json(); } catch { /* not JSON */ }
   if (!response.ok || !payload?.success) {
@@ -182,6 +183,8 @@ const PAGES = [
   ['overview', 'Overview', '📊'],
   ['users', 'Users', '👥'],
   ['reports', 'Reports', '🚩'],
+  ['games', 'Games', '🎮'],
+  ['site', 'Site', '⚙️'],
   ['content', 'Content', '📝'],
   ['communities', 'Communities', '🏛️'],
   ['system', 'System', '🛠️'],
@@ -196,7 +199,7 @@ function renderShell(page) {
     ...nav,
     h('div', { class: 'side__foot' }, h('button', { class: 'nav', onClick: async () => { try { await api('/logout', { method: 'POST' }); } catch { /* already signed out */ } csrf = null; renderLogin(); } }, h('span', { 'aria-hidden': 'true' }, '🚪'), 'Sign out')));
   app.replaceChildren(h('div', { class: 'shell' }, side, main));
-  ({ overview: pageOverview, users: pageUsers, reports: pageReports, content: pageContent, system: pageSystem,
+  ({ overview: pageOverview, users: pageUsers, reports: pageReports, games: pageGames, site: pageSite, content: pageContent, system: pageSystem,
     communities: (target) => pageCommunities(target, { h, api, guard, modal, toast, number, dateText, renderLogin }) })[page](main);
 }
 
@@ -309,6 +312,121 @@ function pageUsers(main) {
   more.addEventListener('click', () => load(false));
   main.append(h('div', { class: 'page-head' }, h('h1', {}, 'Users')), h('div', { class: 'toolbar' }, search), list, h('div', { class: 'toolbar', style: 'margin-top:14px' }, more));
   load(true);
+}
+
+/* ------------------------------ games ----------------------------- */
+
+function pageGames(main) {
+  const list = h('div', { class: 'list' });
+
+  async function load() {
+    list.replaceChildren(h('p', { class: 'empty' }, 'Loading…'));
+    const data = await guard(api('/games'), list);
+    if (!data) return;
+    list.replaceChildren();
+    if (!data.items.length) list.append(h('p', { class: 'empty' }, 'No games yet.'));
+    for (const game of data.items) list.append(row(game));
+  }
+
+  function row(game) {
+    const thumb = h('div', { class: 'row__avatar', style: game.coverUrl ? `background-image:url(${game.coverUrl});background-size:cover;background-position:center` : null }, game.coverUrl ? '' : game.name[0]);
+    const toggle = h('button', { class: 'btn btn--small', type: 'button' }, game.active ? 'Hide' : 'Show');
+    toggle.addEventListener('click', async () => {
+      toggle.disabled = true;
+      try { await api(`/games/${game.slug}`, { method: 'PATCH', body: { active: !game.active } }); toast(game.active ? `${game.name} is hidden.` : `${game.name} is visible.`); load(); }
+      catch (error) { toast(error.message); toggle.disabled = false; }
+    });
+    return h('div', { class: 'row' }, thumb,
+      h('div', { class: 'row__main' },
+        h('div', { class: 'row__name' }, game.name, game.active ? null : h('span', { class: 'chip chip--flat', style: 'margin-left:8px' }, 'Hidden')),
+        h('div', { class: 'row__meta' }, [game.platforms.join(', '), game.genres.join(', ')].filter(Boolean).join(' · ') || game.slug)),
+      h('button', { class: 'btn btn--small', type: 'button', onClick: () => form(game) }, 'Edit'), toggle);
+  }
+
+  function form(game) {
+    const editing = Boolean(game);
+    modal((close) => {
+      const name = h('input', { type: 'text', maxlength: '80', value: game?.name || '', 'aria-label': 'Game name', required: true });
+      const genres = h('input', { type: 'text', value: (game?.genres || []).join(', '), placeholder: 'Shooter, Battle Royale', 'aria-label': 'Genres' });
+      const platforms = h('input', { type: 'text', value: (game?.platforms || []).join(', '), placeholder: 'PC, PlayStation, Mobile', 'aria-label': 'Platforms' });
+      const aliases = h('input', { type: 'text', value: (game?.aliases || []).join(', '), placeholder: 'Other names people use', 'aria-label': 'Other names' });
+      const about = h('input', { type: 'text', maxlength: '300', value: game?.description || '', 'aria-label': 'Short description' });
+      const accent = h('input', { type: 'color', value: game?.accent || '#8b7df6', 'aria-label': 'Accent colour' });
+      const cover = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Cover image' });
+      const banner = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Banner image' });
+      const error = h('p', { class: 'error', role: 'alert' });
+      const save = h('button', { class: 'btn btn--primary', type: 'button' }, editing ? 'Save changes' : 'Add game');
+      save.addEventListener('click', async () => {
+        error.textContent = '';
+        const data = new FormData();
+        data.append('name', name.value); data.append('genres', genres.value); data.append('platforms', platforms.value);
+        data.append('aliases', aliases.value); data.append('description', about.value); data.append('accent', accent.value);
+        if (cover.files[0]) data.append('cover', cover.files[0]);
+        if (banner.files[0]) data.append('banner', banner.files[0]);
+        save.disabled = true; save.textContent = 'Saving…';
+        try {
+          await api(editing ? `/games/${game.slug}` : '/games', { method: editing ? 'PATCH' : 'POST', body: data });
+          close(); toast(editing ? 'Game updated.' : 'Game added. It now shows in Games, search, communities and Find players.'); load();
+        } catch (e) { error.textContent = e.message; save.disabled = false; save.textContent = editing ? 'Save changes' : 'Add game'; }
+      });
+      return [
+        h('h2', {}, editing ? `Edit ${game.name}` : 'Add a game'),
+        h('label', { class: 'field' }, 'Name', name),
+        h('label', { class: 'field' }, 'Genres (comma separated)', genres),
+        h('label', { class: 'field' }, 'Platforms (comma separated)', platforms),
+        h('label', { class: 'field' }, 'Other names (comma separated)', aliases),
+        h('label', { class: 'field' }, 'Short description', about),
+        h('label', { class: 'field' }, 'Accent colour', accent),
+        h('label', { class: 'field' }, editing ? 'New cover image (leave empty to keep the current one)' : 'Cover image (portrait works best)', cover),
+        h('label', { class: 'field' }, editing ? 'New banner image (leave empty to keep the current one)' : 'Banner image (wide, 16:9 works best)', banner),
+        h('p', { class: 'note' }, 'Players can find, tag and build communities around the game right away. Without a cover the game shows a coloured tile.'),
+        error,
+        h('div', { class: 'modal__actions' }, h('button', { class: 'btn', type: 'button', onClick: close }, 'Cancel'), save),
+      ];
+    });
+  }
+
+  main.append(h('div', { class: 'page-head' }, h('h1', {}, 'Games'), h('button', { class: 'btn btn--primary', type: 'button', onClick: () => form(null) }, 'Add game')), list);
+  load();
+}
+
+/* ------------------------------- site ----------------------------- */
+
+async function pageSite(main) {
+  const holder = h('div', { class: 'list' });
+  main.append(h('div', { class: 'page-head' }, h('h1', {}, 'Site controls')), holder);
+  const settings = await guard(api('/site'), holder);
+  if (!settings) return;
+
+  const signups = h('button', { class: 'btn', type: 'button' });
+  const paintSignups = () => { signups.textContent = settings.signupsOpen ? 'Sign-ups are open. Pause them' : 'Sign-ups are paused. Open them'; };
+  paintSignups();
+  signups.addEventListener('click', async () => {
+    signups.disabled = true;
+    try { const next = await api('/site', { method: 'PATCH', body: { signupsOpen: !settings.signupsOpen } }); settings.signupsOpen = next.signupsOpen; paintSignups(); toast(settings.signupsOpen ? 'Sign-ups are open.' : 'Sign-ups are paused.'); }
+    catch (error) { toast(error.message); }
+    signups.disabled = false;
+  });
+
+  const note = settings.announcement || {};
+  const text = h('input', { type: 'text', maxlength: '240', value: note.text || '', placeholder: 'For example: Weekend event starts Friday!', 'aria-label': 'Announcement text' });
+  const tone = h('select', { 'aria-label': 'Style' }, ['info', 'success', 'warning'].map((value) => h('option', { value, selected: (note.tone || 'info') === value ? true : null }, value[0].toUpperCase() + value.slice(1))));
+  const link = h('input', { type: 'url', value: note.link || '', placeholder: 'https://… (optional)', 'aria-label': 'Link' });
+  const active = h('input', { type: 'checkbox', checked: note.active ? true : null, 'aria-label': 'Show the announcement' });
+  const save = h('button', { class: 'btn btn--primary', type: 'button' }, 'Save announcement');
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try { await api('/site', { method: 'PATCH', body: { announcement: { text: text.value, tone: tone.value, link: link.value, active: active.checked } } }); toast(active.checked && text.value.trim() ? 'Announcement is live.' : 'Announcement is hidden.'); }
+    catch (error) { toast(error.message); }
+    save.disabled = false;
+  });
+
+  holder.replaceChildren(
+    h('section', { class: 'card' }, h('h2', {}, 'Sign-ups'), h('p', { class: 'note' }, 'Pause new accounts during an attack or a busy launch. People already signed up are not affected.'), signups),
+    h('section', { class: 'card' }, h('h2', {}, 'Announcement banner'), h('p', { class: 'note' }, 'A short message shown at the top of Arcadia for everyone. People can dismiss it.'),
+      h('label', { class: 'field' }, 'Message', text), h('label', { class: 'field' }, 'Style', tone), h('label', { class: 'field' }, 'Link', link),
+      h('label', { class: 'field' }, h('span', {}, 'Show it now '), active), save)
+  );
 }
 
 /* ----------------------------- reports ---------------------------- */

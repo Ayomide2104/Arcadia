@@ -18,6 +18,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="preload" href="/fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf" as="font" type="font/ttf" crossorigin />
     <title>Arcadia — Play together</title>
+    <link rel="stylesheet" href="/css/arcadia-splash.css" />
     <link rel="stylesheet" href="/css/style.css" />
     <link rel="stylesheet" href="/css/components.css" />
     <link rel="stylesheet" href="/css/social.css" />
@@ -50,6 +51,16 @@
     <script type="module" src="/js/main.js"></script>
   </head>
   <body>
+    <div class="splash" id="splash" role="status" aria-label="Loading Arcadia">
+      <div class="splash__stage">
+        <div class="splash__orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+        <img class="splash__mark" src="/assets/arcadia/brand/logo-mark.svg" alt="" width="84" height="84" />
+      </div>
+      <p class="splash__name">Arcadia</p>
+      <p class="splash__hint">Slow connection. Hang tight…</p>
+      <div class="splash__dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
+    <noscript><style>.splash{display:none}</style></noscript>
     <!-- Existing test account: MKSTUDIOS / @mk_studios. -->
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="topbar">

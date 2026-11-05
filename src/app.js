@@ -106,6 +106,7 @@ app.use('/api/search', require('./routes/searchRoutes'));
 app.use('/api/lfg', require('./routes/lfgRoutes'));
 app.use('/api/safety', require('./routes/safetyRoutes'));
 app.use('/api/follows', require('./routes/followRoutes'));
+app.use('/api/site', require('./routes/siteRoutes'));
 app.use('/api/points', require('./routes/pointsRoutes'));
 app.use('/api/communities', require('./routes/communityRoutes'));
 app.use('/api/friends', require('./routes/friendRequestRoutes'));

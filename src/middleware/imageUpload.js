@@ -35,4 +35,14 @@ uploadImage.postPhotos = multer({
 }).fields([{ name: 'photos', maxCount: MAX_POST_PHOTOS }, { name: 'photo', maxCount: 1 }]);
 uploadImage.MAX_POST_PHOTOS = MAX_POST_PHOTOS;
 
+// Admin game artwork: one cover and one banner.
+uploadImage.gameArt = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 2, fields: 20 },
+  fileFilter: (req, file, callback) => {
+    if (!allowedMimeTypes.has(file.mimetype)) return callback(Object.assign(new Error('Upload a JPEG, PNG, WebP, or GIF image.'), { status: 400 }));
+    callback(null, true);
+  },
+}).fields([{ name: 'cover', maxCount: 1 }, { name: 'banner', maxCount: 1 }]);
+
 module.exports = uploadImage;

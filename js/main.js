@@ -16,10 +16,15 @@ import { createSearch } from './search.js';
 import { createLfg } from './lfg.js';
 import { createDrawer } from './drawer.js';
 import { initFonts, renderFontPicker } from './fonts.js';
+import { createLoader, hideSplash, initSplash } from './loading.js';
+import { showSiteBanner } from './siteBanner.js';
 import { createSafety } from './safety.js';
 import { createSocial } from './social.js';
 import { initViewport } from './viewport.js';
 import { initPullRefresh } from './pullRefresh.js';
+
+const loader = createLoader();
+initSplash();
 import { attachMenu } from './popover.js';
 import { createThread } from './commentThread.js';
 
@@ -268,6 +273,11 @@ function setAuthMode(mode) {
 }
 
 async function api(path, options = {}) {
+  const done = loader.begin(path, options);
+  try { return await apiCore(path, options); } finally { done(); }
+}
+
+async function apiCore(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
 
   const mutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
@@ -397,7 +407,7 @@ async function restoreSession() {
   } catch {
     // A guest can read public posts; an expired cookie simply leaves the guest view.
   }
-  await loadFeed();
+  try { await loadFeed(); } finally { hideSplash(); }
 }
 
 
@@ -1983,10 +1993,14 @@ function getArcadiaGame(gameName) {
 
   const resolvedKey = aliases[key] || key;
 
+  // Games an admin added later have no built-in artwork: ask the server for what was uploaded
+  // (it answers with the image, or 404 and the usual coloured tile shows).
+  const artSlug = resolvedKey.replace(/\s+/g, '-');
+
   return ARCADIA_GAME_CATALOG[resolvedKey] || {
     title: originalName,
-    banner: '',
-    cover: '',
+    banner: artSlug ? `../../../api/games/art/${artSlug}/banner` : '',
+    cover: artSlug ? `../../../api/games/art/${artSlug}/cover` : '',
     genre: 'Video game',
     developer: 'Not listed',
     platforms: 'Not listed',
@@ -3105,3 +3119,4 @@ function composePost() { composer.open(); }
 
 $$('[data-action="compose"]').forEach((button) => button.setAttribute('aria-label', 'Write a post'));
 restoreSession();
+void showSiteBanner({ api: (path, options) => api(path, options) });

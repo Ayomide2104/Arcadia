@@ -96,6 +96,18 @@ router.get('/popular', catalogLimit, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// GET /api/games/art/:slug/:kind  -> redirects to artwork an admin uploaded (kind: cover | banner)
+router.get('/art/:slug/:kind', async (req, res, next) => {
+  try {
+    if (!/^[a-z0-9-]{1,60}$/.test(req.params.slug) || !['cover', 'banner'].includes(req.params.kind)) return res.status(404).end();
+    const game = await Game.findOne({ slug: req.params.slug, active: true }).select('coverUrl bannerUrl').lean();
+    const url = game && (req.params.kind === 'cover' ? game.coverUrl : game.bannerUrl);
+    if (!url) return res.status(404).end();
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.redirect(302, url);
+  } catch (error) { return next(error); }
+});
+
 router.get('/:slug', catalogLimit, async (req, res, next) => {
   try {
     if (!/^[a-z0-9-]{2,60}$/.test(req.params.slug)) return res.status(400).json({ success: false, error: 'Invalid game.' });

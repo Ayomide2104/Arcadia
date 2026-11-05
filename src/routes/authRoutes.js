@@ -13,6 +13,7 @@ const cloudinary = require('../config/cloudinary');
 const { hasImageSignature, removeOwnedImage } = require('../services/media');
 const presence = require('../services/presence');
 
+const { getSettings } = require('../services/siteSettings');
 const router = express.Router();
 const WINDOW = 15 * 60 * 1000;
 const registerLimit = rateLimit({ name: 'auth-register', max: 12, windowMs: WINDOW });
@@ -30,6 +31,9 @@ async function issueSession(userId, res) {
 }
 router.post('/register', registerLimit, async (req, res, next) => {
   try {
+    if ((await getSettings()).signupsOpen === false) {
+      return res.status(403).json({ success: false, error: 'New sign-ups are paused for a moment. Please check back soon.' });
+    }
     const validation = validateRegistration(req.body);
     if (!validation.valid) return res.status(400).json({ success: false, error: validation.error });
     const username = validation.username;
