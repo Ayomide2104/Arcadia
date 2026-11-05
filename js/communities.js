@@ -1162,6 +1162,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     if (tab === 'chat' && !role) tab = 'posts';
     state.route.tab = tab;
     host.classList.toggle('is-chat', tab === 'chat');
+    document.body.classList.toggle('cc-full', tab === 'chat');
 
     host.replaceChildren();
     const back = backButton('All communities');
@@ -1480,6 +1481,7 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
   /* ---------- Group chat ---------- */
 
   function teardownChat() {
+    document.body.classList.remove('cc-full');
     if (chat) { chat.destroy(); chat = null; }
   }
 
@@ -1529,7 +1531,12 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     const headTopic = el('p', 'cc-head-topic');
     headText.append(headName, headTopic);
     const presence = el('span', 'cc-presence');
-    head.append(headText, presence);
+    const exit = el('button', 'cc-exit');
+    exit.type = 'button';
+    exit.setAttribute('aria-label', `Back to ${community.name}`);
+    exit.innerHTML = BACK_ICON;
+    exit.addEventListener('click', () => { state.route.tab = 'posts'; void renderCommunity(); });
+    head.append(exit, headText, presence);
 
     const scroller = el('div', 'cc-scroll');
     scroller.setAttribute('role', 'log');
@@ -1565,7 +1572,13 @@ export function createCommunities({ api, getUser, toast, openAuth, gameInfo, nav
     function drawRail() {
       rail.replaceChildren();
       const top = el('div', 'cc-rail-head');
-      top.append(el('span', 'cc-rail-title', 'Channels'));
+      // On phones the channel strip is at the very top, so the way back lives here.
+      const railExit = el('button', 'cc-exit cc-exit--rail');
+      railExit.type = 'button';
+      railExit.setAttribute('aria-label', `Back to ${community.name}`);
+      railExit.innerHTML = BACK_ICON;
+      railExit.addEventListener('click', () => { state.route.tab = 'posts'; void renderCommunity(); });
+      top.append(railExit, el('span', 'cc-rail-title', 'Channels'));
       if (staff) {
         const add = el('button', 'cc-icon-btn cc-icon-btn--small', '+');
         add.type = 'button';

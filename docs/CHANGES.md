@@ -25,3 +25,7 @@ Other: `scripts/smoke*.mjs`, `tests/{lfgConfig,arcadianPoints}.test.js`.
 - Chat: reply to a message, delete for me, delete for everyone, delete a whole chat (`messageRoutes.js`, `Message.js`, `messaging.js`).
 - Community posts accept photos (`communityRoutes.js`, `postPhotos.js`, `communities.js`, `composer.js`).
 - ⋯ menu and pull-to-refresh made more tap-safe (`popover.js`, `pullRefresh.js`).
+
+## Round after that
+- Fonts: `css/arcadia-fonts.css` (declares fonts from `public/fonts`), `js/fonts.js` (catalogue, free vs store tiers, Settings picker); `index.html` links the css and preloads Plus Jakarta Sans; `main.js` calls `initFonts()` and adds a Fonts card in Settings.
+- Full-page community chat: `communities.js` (body class `cc-full`, back buttons), styles at the end of `css/arcadia-fixes.css`.

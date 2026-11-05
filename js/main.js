@@ -15,6 +15,7 @@ import { createNotifications } from './notifications.js';
 import { createSearch } from './search.js';
 import { createLfg } from './lfg.js';
 import { createDrawer } from './drawer.js';
+import { initFonts, renderFontPicker } from './fonts.js';
 import { createSafety } from './safety.js';
 import { createSocial } from './social.js';
 import { initViewport } from './viewport.js';
@@ -133,6 +134,7 @@ let profilePromise = Promise.resolve();
 
 function selectView(view) {
   document.body.dataset.view = view;
+  if (view !== 'groups') document.body.classList.remove('cc-full');
   $$('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== view; });
   $$('[data-view]').forEach((button) => {
     const active = button.dataset.view === view || (view === 'groups' && button.dataset.view === 'games' && button.closest('.mobile-dock'));
@@ -1320,6 +1322,7 @@ const commentsHandle = $('.comments-drag-handle');
 commentsHandle.addEventListener('touchstart', (event) => { commentsTouchStart = event.touches[0].clientY; }, { passive: true });
 commentsHandle.addEventListener('touchend', (event) => { if (commentsTouchStart !== null && event.changedTouches[0].clientY - commentsTouchStart > 75) requestCommentsClose(); commentsTouchStart = null; }, { passive: true });
 initViewport();
+initFonts();
 
 // Pull down to refresh the page you're on (content only; never jumps to Home).
 let shownProfile = null;
@@ -2931,6 +2934,11 @@ async function renderSettings(host) {
   const blockedList = uiEl('div', 'st-muted');
   blockedCard.append(uiEl('p', 'st-desc', 'Blocked players can’t see your posts, message you or send friend requests, and you won’t see theirs. They aren’t told.'), blockedList);
   page.append(blockedCard);
+  const fontCard = stCard('Fonts');
+  const fontHost = uiEl('div', 'fp-host');
+  fontCard.append(fontHost);
+  page.append(fontCard);
+  renderFontPicker(fontHost, { user: currentUser, toast: (message) => toast(message) });
   void safety.renderBlockedList(blockedList);
   void (async () => {
     try {

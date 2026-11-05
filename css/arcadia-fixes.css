@@ -230,3 +230,35 @@ body .fm-pop { z-index: 20000; }
 .cm-photo-tile img { width: 100%; height: 100%; object-fit: cover; }
 .cm-photo-remove { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: rgb(15 18 28 / 70%); color: #fff; font-size: 17px; line-height: 1; cursor: pointer; }
 .cm-photo-btn { margin-right: auto; }
+
+/* ============ Full-page community chat ============ */
+/* When a community's Chat tab is open the chat takes the whole screen, like a messaging app. */
+body.cc-full .topbar, body.cc-full .mobile-dock, body.cc-full .side-rail, body.cc-full .ptr { display: none !important; }
+body.cc-full .cm.is-chat .cm-back, body.cc-full .cm.is-chat .cm-banner, body.cc-full .cm.is-chat .cm-idbar, body.cc-full .cm.is-chat .cm-tabs { display: none; }
+body.cc-full .cm.is-chat .cc {
+  position: fixed; inset: 0; z-index: 70; width: 100%; max-width: none;
+  height: var(--visual-vh, 100dvh); min-height: 0; margin: 0;
+  border: 0; border-radius: 0; background: var(--card, #fff);
+  padding-top: env(safe-area-inset-top, 0px);
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+body.cc-full .cm.is-chat .cc-head { padding-left: 8px; }
+body.cc-full .cm.is-chat .cc-composer { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+html.kb-open body.cc-full .cm.is-chat .cc-composer { padding-bottom: 10px; }
+.cc-exit { display: none; flex: none; place-items: center; width: 40px; height: 40px; margin-right: 4px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
+.cc-exit:hover { background: var(--pc-soft, #f1f2f7); }
+.cc-exit .back-icon { width: 22px; height: 22px; }
+body.cc-full .cc-exit { display: inline-grid; }
+@media (max-width: 700px) {
+  body.cc-full .cm.is-chat .cc { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: var(--visual-vh, 100dvh); min-height: 0; }
+  body.cc-full .cm.is-chat .cc-rail { order: 2; }
+  body.cc-full .cm.is-chat .cc-pane { order: 3; }
+}
+.cc-exit--rail { display: none; }
+@media (max-width: 700px) {
+  body.cc-full .cc-head .cc-exit { display: none; }
+  body.cc-full .cc-exit--rail { display: inline-grid; }
+  body.cc-full .cm.is-chat .cc-rail-head { padding-left: 0; }
+}
+body.cc-full .cc-exit.cc-exit--rail { display: none; }
+@media (max-width: 700px) { body.cc-full .cc-exit.cc-exit--rail { display: inline-grid; } }

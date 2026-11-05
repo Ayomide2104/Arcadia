@@ -1,0 +1,65 @@
+/* Arcadia fonts: self-hosted from /public/fonts. Only the font a person actually uses is downloaded. */
+
+/* ---------- Everyday fonts (free) ---------- */
+@font-face { font-family: 'Plus Jakarta Sans'; src: url('/fonts/Plus_Jakarta_Sans/PlusJakartaSans-VariableFont_wght.ttf') format('truetype'); font-weight: 200 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Plus Jakarta Sans'; src: url('/fonts/Plus_Jakarta_Sans/PlusJakartaSans-Italic-VariableFont_wght.ttf') format('truetype'); font-weight: 200 800; font-style: italic; font-display: swap; }
+@font-face { font-family: 'DM Sans'; src: url('/fonts/DM_Sans/DMSans-VariableFont_opsz,wght.ttf') format('truetype'); font-weight: 100 1000; font-style: normal; font-display: swap; }
+@font-face { font-family: 'DM Sans'; src: url('/fonts/DM_Sans/DMSans-Italic-VariableFont_opsz,wght.ttf') format('truetype'); font-weight: 100 1000; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Manrope'; src: url('/fonts/Manrope/Manrope-VariableFont_wght.ttf') format('truetype'); font-weight: 200 800; font-display: swap; }
+@font-face { font-family: 'Outfit'; src: url('/fonts/Outfit/Outfit-VariableFont_wght.ttf') format('truetype'); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: 'Space Grotesk'; src: url('/fonts/Space_Grotesk/SpaceGrotesk-VariableFont_wght.ttf') format('truetype'); font-weight: 300 700; font-display: swap; }
+@font-face { font-family: 'Satoshi'; src: url('/fonts/Satoshi_Complete/Satoshi_Complete/Fonts/WEB/fonts/Satoshi-Variable.woff2') format('woff2'); font-weight: 300 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Satoshi'; src: url('/fonts/Satoshi_Complete/Satoshi_Complete/Fonts/WEB/fonts/Satoshi-VariableItalic.woff2') format('woff2'); font-weight: 300 900; font-style: italic; font-display: swap; }
+
+/* ---------- Store fonts: readable ---------- */
+@font-face { font-family: 'Bricolage Grotesque'; src: url('/fonts/Bricolage_Grotesque/BricolageGrotesque-VariableFont_opsz,wdth,wght.ttf') format('truetype'); font-weight: 200 800; font-stretch: 75% 100%; font-display: swap; }
+@font-face { font-family: 'Redaction 50'; src: url('/fonts/Redaction_50/Redaction50-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Redaction 50'; src: url('/fonts/Redaction_50/Redaction50-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Redaction 50'; src: url('/fonts/Redaction_50/Redaction50-Italic.ttf') format('truetype'); font-weight: 400; font-style: italic; font-display: swap; }
+
+/* ---------- Store fonts: display (headings and names only) ---------- */
+@font-face { font-family: 'Redaction 70'; src: url('/fonts/Redaction_70/Redaction70-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Redaction 70'; src: url('/fonts/Redaction_70/Redaction70-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Silkscreen'; src: url('/fonts/Silkscreen/Silkscreen-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Silkscreen'; src: url('/fonts/Silkscreen/Silkscreen-Bold.ttf') format('truetype'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Coral Pixels'; src: url('/fonts/Coral_Pixels/CoralPixels-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Rubik Glitch'; src: url('/fonts/Rubik_Glitch/RubikGlitch-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Rubik Puddles'; src: url('/fonts/Rubik_Puddles/RubikPuddles-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Passero One'; src: url('/fonts/Passero_One/PasseroOne-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Momo Signature'; src: url('/fonts/Momo_Signature/MomoSignature-Regular.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Kablammo'; src: url('/fonts/Kablammo/Kablammo-Regular-VariableFont_MORF.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Nabla'; src: url('/fonts/Nabla/Nabla-Regular-VariableFont_EDPT,EHLT.ttf') format('truetype'); font-display: swap; }
+@font-face { font-family: 'Honk'; src: url('/fonts/Honk/Honk-Regular-VariableFont_MORF,SHLN.ttf') format('truetype'); font-display: swap; }
+
+/* ---------- How the chosen fonts are applied ---------- */
+:root {
+  --font-body: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: var(--font-body);
+}
+
+html body,
+html body button, html body input, html body textarea, html body select,
+html body dialog.auth-page, html body .ob-page, html body .nt-panel {
+  font-family: var(--font-body) !important;
+}
+
+/* Headings, the logo and big numbers use the display font. The Games section keeps its own title fonts. */
+html body :is(h1, h2, h3, .brand__name, .so-big strong, .so-tier, .so-stat-num):not(#view-games *, .gd-page *, dialog.auth-page *) {
+  font-family: var(--font-display) !important;
+}
+
+/* Settings: font picker */
+.fp-section { display: grid; gap: 10px; margin-top: 4px; }
+.fp-section h3 { margin: 6px 0 0; font-size: 14px; }
+.fp-note { margin: 0; color: var(--muted, #667085); font-size: 13px; line-height: 1.45; }
+.fp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.fp-option { position: relative; display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border, #e6e8ee); border-radius: 14px; background: var(--card, #fff); color: var(--text, #14171f); text-align: left; cursor: pointer; transition: border-color .12s, background .12s; }
+.fp-option:hover { border-color: rgb(90 63 214 / 50%); }
+.fp-option.is-selected { border-color: var(--accent, #5a3fd6); background: rgb(90 63 214 / 8%); box-shadow: 0 0 0 1px var(--accent, #5a3fd6) inset; }
+.fp-option.is-locked { cursor: default; }
+.fp-sample { overflow: hidden; font-size: 22px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.fp-name { font-family: var(--font-body); font-size: 12.5px; font-weight: 700; }
+.fp-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted, #667085); font-size: 11.5px; }
+.fp-badge { padding: 2px 8px; border-radius: 999px; background: var(--pc-soft, #f1f2f7); font-size: 11px; font-weight: 700; }
+.fp-badge--store { background: rgb(90 63 214 / 12%); color: var(--accent, #5a3fd6); }
+.fp-reset { width: fit-content; min-height: 38px; padding: 0 16px; border: 1px solid var(--border, #e6e8ee); border-radius: 999px; background: var(--card, #fff); color: inherit; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
