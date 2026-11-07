@@ -45,3 +45,12 @@ Other: `scripts/smoke*.mjs`, `tests/{lfgConfig,arcadianPoints}.test.js`.
 - Removed "Open original" from `js/lightbox.js`.
 - Profile stats row and tabs, feed tabs fit four, notch/status-bar colour (`index.html`, `manifest.webmanifest`, `applyTheme` in `main.js`).
 - `⋯` menu no longer closes on harmless scroll/resize events (`popover.js`).
+
+## Round: animations (needs `npm install @formkit/auto-animate motion canvas-confetti` first)
+- New: `js/motionKit.js` (one place for motion, auto-animate and confetti helpers), `css/arcadia-motion.css` (timing tokens, page/sheet/menu/toast/lightbox/drawer animations, skeleton shimmer, reduced-motion rules).
+- Pages slide in (`selectView` in `main.js`); comment sheet follows your finger and springs (`main.js`); menu drawer items stagger in and swipe-left-to-close follows the finger (`drawer.js`).
+- Smooth add/remove in lists: feed, comments and replies, notifications, Find players (`animateList`).
+- Likes pop, follow button pops, points count up and level-ups celebrate (`commentThread.js`, `social.js`).
+- Bottom bar icon bounce and + press feedback, loading skeletons on the post page, chat bubbles fade in, photo viewer zoom.
+- `scripts/smoke-hooks.mjs`: the start-up check now really loads `main.js` (stand-ins only for packages that are missing).
+- Do not replace your own `package.json` / `package-lock.json` with ones from a zip: `npm install` updates them for you and Render needs them in sync.

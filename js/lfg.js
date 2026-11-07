@@ -4,6 +4,8 @@
 
 import { layerHost } from './layers.js';
 
+import { animateList } from './motionKit.js';
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -97,6 +99,7 @@ export function createLfg({ mount, api, getUser, toast, onNeedSignIn, setAvatar,
 
   async function renderOpen(body) {
     const list = el('div', 'lfg-list');
+    animateList(list);
     body.append(filterBar(() => void loadOpen(list)), list);
     await loadOpen(list);
   }

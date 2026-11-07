@@ -74,6 +74,7 @@ export function initSwipeBack({ canGoBack, goBack, openMenu, isHome }) {
     node.style.transform = `translateX(${window.innerWidth}px)`;
     node.style.opacity = '.6';
     window.setTimeout(() => {
+      window.arcadiaSkipEnter = true;
       goBack();
       panel = node;
       node.style.opacity = '';

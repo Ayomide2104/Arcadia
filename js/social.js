@@ -5,6 +5,7 @@
    - A page of its own for Arcadian points: total, level, breakdown, top posts and the rules. */
 
 import { layerHost, swallowEscape } from './layers.js';
+import { countUp, celebrate, pop } from './motionKit.js';
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -62,6 +63,7 @@ export function createSocial({ api, toast, getUser, onNeedSignIn, setAvatar, ope
         const result = await api(`/follows/${name}`, { method: wasFollowing ? 'DELETE' : 'POST' });
         state = { ...state, following: !wasFollowing };
         paint();
+        pop(button, 'is-pop', 450);
         toast(wasFollowing ? `Unfollowed @${person.username}.` : `You’re following @${person.username}. You’ll see more of their posts.`);
         onChange?.(state, result);
       } catch (error) { toast(error.message || 'Could not do that.'); }
@@ -216,11 +218,27 @@ export function createSocial({ api, toast, getUser, onNeedSignIn, setAvatar, ope
     const hero = el('section', 'so-hero');
     const big = el('div', 'so-big');
     big.innerHTML = BOLT;
-    big.append(el('strong', '', fmt(data.total)));
+    const bigNumber = el('strong', '', fmt(data.total));
+    big.append(bigNumber);
     const meta = el('div', 'so-hero-meta');
     meta.append(el('span', 'so-tier', data.tier.name), el('span', 'so-week', `${data.week >= 0 ? '+' : ''}${fmt(data.week)} this week`));
     const top = el('div', 'so-hero-top'); top.append(big, meta);
     hero.append(top, bar(data.tier.progress));
+
+    // Show what changed since the last visit: the number counts up, and a level-up gets a celebration.
+    if (data.isMe) {
+      const key = `arcadia.points.${data.username}`;
+      let seen = null;
+      try { seen = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* ignore */ }
+      if (seen && typeof seen.total === 'number' && data.total > seen.total) {
+        countUp(bigNumber, seen.total, data.total, { duration: 1.1, format: (value) => fmt(Math.round(value)) });
+        pop(big, 'is-pop', 700);
+        window.setTimeout(() => celebrate({ big: Boolean(seen.tier && seen.tier !== data.tier.key) }), 350);
+      } else if (!seen) {
+        countUp(bigNumber, 0, data.total, { duration: 0.9, format: (value) => fmt(Math.round(value)) });
+      }
+      try { localStorage.setItem(key, JSON.stringify({ total: data.total, tier: data.tier.key })); } catch { /* ignore */ }
+    }
     hero.append(el('p', 'so-hero-note', data.tier.next ? `${fmt(data.tier.next.remaining)} more to reach ${data.tier.next.name}` : 'You’ve reached the highest level.'));
     page.append(hero);
 

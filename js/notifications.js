@@ -31,6 +31,8 @@ function timeAgo(value) {
   return new Date(value).toLocaleDateString();
 }
 
+import { animateList } from './motionKit.js';
+
 export function createNotifications({ api, getUser, button, onNeedSignIn, onOpenPost, onOpenProfile, onOpenFriends, onOpenLfg }) {
   if (!button) return { refresh() {}, reset() {} };
 
@@ -54,6 +56,7 @@ export function createNotifications({ api, getUser, button, onNeedSignIn, onOpen
   close.setAttribute('aria-label', 'Close notifications');
   head.append(markAll, close);
   const list = el('div', 'nt-list');
+  animateList(list);
   const more = el('button', 'nt-more', 'Show older');
   more.type = 'button';
   more.hidden = true;

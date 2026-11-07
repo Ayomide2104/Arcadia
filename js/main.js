@@ -23,6 +23,7 @@ import { createSocial } from './social.js';
 import { initViewport } from './viewport.js';
 import { initDock, updateDockPill } from './dock.js';
 import { initSwipeBack } from './swipeBack.js';
+import { animateList, springValue, reduced } from './motionKit.js';
 import { initPullRefresh } from './pullRefresh.js';
 
 const loader = createLoader();
@@ -159,6 +160,17 @@ function selectView(view, { fromHistory = false, extra = {} } = {}) {
   document.body.dataset.view = view;
   if (view !== 'groups') document.body.classList.remove('cc-full');
   $$('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== view; });
+  // The page you arrive on slides in (from the right going forward, from the left going back).
+  if (view !== previousView && !reduced()) {
+    const skip = window.arcadiaSkipEnter; window.arcadiaSkipEnter = false;
+    const arriving = document.querySelector(`[data-panel="${view}"]`);
+    if (arriving && !skip) {
+      arriving.classList.remove('view-enter-fwd', 'view-enter-back');
+      void arriving.offsetWidth;
+      arriving.classList.add(fromHistory ? 'view-enter-back' : 'view-enter-fwd');
+      arriving.addEventListener('animationend', () => arriving.classList.remove('view-enter-fwd', 'view-enter-back'), { once: true });
+    }
+  }
   $$('[data-view]').forEach((button) => {
     const active = button.dataset.view === view || (view === 'groups' && button.dataset.view === 'games' && button.closest('.mobile-dock'));
     button.classList.toggle('is-active', active);
@@ -422,6 +434,7 @@ let activeFeed = 'for-you';
 let feedLoading = false;
 let feedObserver = null;
 let feedGeneration = 0;
+let feedAnim = null;
 
 async function loadFeed(filter = activeFeed, cursor = null) {
   if (feedLoading) return;
@@ -433,6 +446,8 @@ async function loadFeed(filter = activeFeed, cursor = null) {
   activeFeed = filter;
 
   const isInitialLoad = !cursor;
+  if (!feedAnim) feedAnim = animateList(list);
+  if (isInitialLoad) feedAnim?.disable();
 
   if (isInitialLoad) {
     void circle.show(filter);
@@ -447,6 +462,7 @@ async function loadFeed(filter = activeFeed, cursor = null) {
     state.hidden = false;
     state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Finding your people…</h2><p>Loading the latest conversations.</p>';
     list.replaceChildren();
+    window.setTimeout(() => feedAnim?.enable(), 600);
   }
 
   const generation = feedGeneration;
@@ -1360,9 +1376,39 @@ $('#comments-form').addEventListener('submit', async (event) => {
   catch (error) { setCommentsError(error, () => commentsForm.requestSubmit()); }
   finally { send.disabled = false; }
 });
-const commentsHandle = $('.comments-drag-handle');
-commentsHandle.addEventListener('touchstart', (event) => { commentsTouchStart = event.touches[0].clientY; }, { passive: true });
-commentsHandle.addEventListener('touchend', (event) => { if (commentsTouchStart !== null && event.changedTouches[0].clientY - commentsTouchStart > 75) requestCommentsClose(); commentsTouchStart = null; }, { passive: true });
+// Drag the comment sheet down by its handle or title: it follows your finger and springs closed or back.
+{
+  const dialogNode = $('#comments-dialog');
+  const handle = $('.comments-drag-handle');
+  const grabZones = [handle, handle.nextElementSibling].filter(Boolean);
+  let startY = null; let startT = 0; let dragY = 0;
+  const move = (y) => { dialogNode.style.transform = y ? `translateY(${y}px)` : ''; };
+  grabZones.forEach((zone) => {
+    zone.addEventListener('touchstart', (event) => { if (event.target.closest('button')) return; startY = event.touches[0].clientY; startT = Date.now(); dragY = 0; dialogNode.style.transition = 'none'; }, { passive: true });
+    zone.addEventListener('touchmove', (event) => {
+      if (startY === null) return;
+      dragY = Math.max(0, event.touches[0].clientY - startY);
+      move(dragY * 0.96);
+      if (event.cancelable) event.preventDefault();
+    }, { passive: false });
+    const release = async () => {
+      if (startY === null) return;
+      const velocity = dragY / Math.max(1, Date.now() - startT);
+      startY = null;
+      dialogNode.style.transition = '';
+      if (dragY > 110 || (dragY > 40 && velocity > 0.6)) {
+        await springValue(dragY, dialogNode.offsetHeight, move, { velocity: velocity * 1000 });
+        requestCommentsClose();
+        window.setTimeout(() => move(0), 60);
+      } else {
+        await springValue(dragY, 0, move);
+        move(0);
+      }
+    };
+    zone.addEventListener('touchend', release, { passive: true });
+    zone.addEventListener('touchcancel', release, { passive: true });
+  });
+}
 initViewport();
 initFonts();
 
@@ -1498,7 +1544,9 @@ function showPostPage(post, { fromHistory = false } = {}) {
   }
   page.append(composer);
 
-  list.append(uiEl('p', 'pp-loading', 'Loading comments…'));
+  const skeleton = uiEl('div', 'sk-stack');
+  for (let i = 0; i < 3; i += 1) { const row = uiEl('div', 'sk-row'); row.append(uiEl('div', 'sk-line sk-line--short'), uiEl('div', 'sk-line'), uiEl('div', 'sk-line sk-line--mid')); skeleton.append(row); }
+  list.append(skeleton);
   api(`/posts/${post._id}/comments?limit=50`).then((data) => {
     if (pagePost !== post) return;
     pageThread = createThread({ host: list, comments: data.items || [], ...commentThreadConfig(() => pagePost, bumpPageComments) });

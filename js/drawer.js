@@ -2,6 +2,8 @@
    One place for every section of Arcadia, so the top bar stays clean and
    Communities, Find players and the rest are one tap away on mobile. */
 
+import { springValue } from './motionKit.js';
+
 const ICONS = {
   home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-6v-7h-4v7H4a1 1 0 0 1-1-1Z"/>',
   games: '<path d="M7 8h10a4 4 0 0 1 3.8 5.2l-1 3.2a2.3 2.3 0 0 1-3.8 1l-2-2H10l-2 2a2.3 2.3 0 0 1-3.8-1l-1-3.2A4 4 0 0 1 7 8Z"/><path d="M8 11v4m-2-2h4"/>',
@@ -92,11 +94,13 @@ export function createDrawer({ toggle, getUser, actions, getView }) {
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   }
 
+  let rowIndex = 0;
   function row(item, current) {
     const button = el('button', `dr-item${item.id === current ? ' is-current' : ''}`);
     button.type = 'button';
     if (item.id === current) button.setAttribute('aria-current', 'page');
     button.append(icon(item.icon), el('span', 'dr-label', item.label));
+    button.style.setProperty('--i', String(rowIndex++));
     button.addEventListener('click', () => choose(item.run));
     return button;
   }
@@ -106,6 +110,7 @@ export function createDrawer({ toggle, getUser, actions, getView }) {
     lastFocus = document.activeElement;
     const user = getUser();
     const current = getView?.() || 'feed';
+    rowIndex = 0;
 
     overlay = el('div', 'dr-overlay');
     overlay.addEventListener('click', () => close());
@@ -163,6 +168,34 @@ export function createDrawer({ toggle, getUser, actions, getView }) {
     foot.append(auth);
 
     drawer.append(head, body, foot);
+
+    // Swipe left on the menu to close it: it follows your finger and springs away.
+    let sx = null; let sy = 0; let st = 0; let dragX = 0;
+    drawer.addEventListener('touchstart', (event) => { sx = event.touches[0].clientX; sy = event.touches[0].clientY; st = Date.now(); dragX = 0; }, { passive: true });
+    drawer.addEventListener('touchmove', (event) => {
+      if (sx === null) return;
+      const dx = event.touches[0].clientX - sx; const dy = event.touches[0].clientY - sy;
+      if (dragX === 0 && (dx > -8 || Math.abs(dy) > Math.abs(dx))) return;
+      dragX = Math.min(0, dx);
+      drawer.style.transition = 'none'; overlay.style.transition = 'none';
+      drawer.style.transform = `translateX(${dragX}px)`;
+      overlay.style.opacity = String(Math.max(0, 1 + dragX / drawer.offsetWidth));
+    }, { passive: true });
+    const endDrag = async () => {
+      if (sx === null) return;
+      const velocity = Math.abs(dragX) / Math.max(1, Date.now() - st);
+      const mine = drawer; const shade = overlay;
+      sx = null;
+      if (!dragX) return;
+      const commit = Math.abs(dragX) > mine.offsetWidth * 0.33 || velocity > 0.5;
+      const target = commit ? -mine.offsetWidth : 0;
+      await springValue(dragX, target, (value) => { mine.style.transform = `translateX(${value}px)`; shade.style.opacity = String(Math.max(0, 1 + value / mine.offsetWidth)); }, { velocity: -velocity * 1000 });
+      mine.style.transition = ''; shade.style.transition = '';
+      if (commit) { mine.style.transform = ''; shade.style.opacity = ''; close(); }
+      else { mine.style.transform = ''; shade.style.opacity = ''; }
+    };
+    drawer.addEventListener('touchend', endDrag, { passive: true });
+    drawer.addEventListener('touchcancel', endDrag, { passive: true });
     document.body.append(overlay, drawer);
     document.documentElement.classList.add('dr-lock');
     toggle.setAttribute('aria-expanded', 'true');

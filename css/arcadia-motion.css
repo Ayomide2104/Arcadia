@@ -1,0 +1,75 @@
+/* Arcadia motion: shared timing, page and sheet transitions, tap feedback, and reduced-motion rules. */
+
+:root {
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-spring: cubic-bezier(.34, 1.4, .5, 1);
+  --dur-fast: .15s;
+  --dur: .25s;
+  --dur-slow: .4s;
+}
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(22px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+/* ---- Pages: the one you arrive on slides in ---- */
+@keyframes view-in-fwd { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes view-in-back { from { opacity: 0; transform: translateX(-22px); } to { opacity: 1; transform: none; } }
+@keyframes view-fade { from { opacity: 0; } to { opacity: 1; } }
+.view-enter-fwd { animation: view-in-fwd .3s var(--ease-out) both; }
+.view-enter-back { animation: view-in-back .28s var(--ease-out) both; }
+/* Pages with a pinned bar or full-screen chat must not be transformed (it would move their fixed parts). */
+#view-post.view-enter-fwd, #view-post.view-enter-back, #view-groups.view-enter-fwd, #view-groups.view-enter-back { animation: view-fade .22s ease-out both; }
+
+/* ---- Bottom bar ---- */
+@keyframes dock-bounce { 0% { transform: scale(.82) translateY(3px); } 55% { transform: scale(1.18) translateY(-3px); } 100% { transform: none; } }
+.mobile-dock .nav-item.is-active svg { animation: dock-bounce .5s var(--ease-spring); }
+.mobile-dock .mobile-dock__compose { transition: transform .22s var(--ease-spring), box-shadow .2s; }
+.mobile-dock .mobile-dock__compose:active { transform: scale(.9); }
+.mobile-dock .mobile-dock__compose svg { transition: transform .3s var(--ease-spring); }
+.mobile-dock .mobile-dock__compose:active svg { transform: rotate(90deg) scale(1.1); }
+
+/* ---- Sheets, dialogs, menus, toasts ---- */
+.sf-overlay, .lfg-overlay, .so-overlay { animation: fade-in .2s ease-out; }
+.sf-sheet, .lfg-sheet, .so-sheet { animation: sheet-in .3s var(--ease-out); }
+body .fm-pop { animation: pop-in .18s var(--ease-out); transform-origin: top right; }
+.site-banner { animation: pop-in .35s var(--ease-out); }
+.toast { animation: pop-in .32s var(--ease-spring); }
+@keyframes lb-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes lb-zoom { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+dialog.lb[open] { animation: lb-in .22s var(--ease-out); }
+dialog.lb[open] img { animation: lb-zoom .32s var(--ease-out); }
+dialog.lb[open]::backdrop { animation: fade-in .22s ease-out; }
+.dr-overlay { transition: opacity .22s ease; }
+
+/* ---- Menu: items glide in one after another ---- */
+@keyframes dr-item-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+.dr-panel.is-open .dr-item, .dr-panel.is-open .dr-compose { animation: dr-item-in .36s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 28ms + 70ms); }
+
+/* ---- Likes, votes, follow, points ---- */
+@keyframes heart-pop { 0% { transform: scale(.6); } 45% { transform: scale(1.4); } 100% { transform: scale(1); } }
+.rt-vote.is-pop svg { animation: heart-pop .42s var(--ease-spring); }
+@keyframes btn-pop { 0% { transform: scale(.92); } 55% { transform: scale(1.07); } 100% { transform: scale(1); } }
+.so-follow.is-pop { animation: btn-pop .42s var(--ease-spring); }
+@keyframes pts-pop { 0% { transform: scale(1); } 40% { transform: scale(1.12); } 100% { transform: scale(1); } }
+.so-big.is-pop { animation: pts-pop .7s var(--ease-spring); }
+.so-big.is-pop .so-bolt { animation: heart-pop .7s var(--ease-spring); }
+
+/* ---- Loading placeholders ---- */
+.sk-stack { display: grid; gap: 16px; padding: 8px 0; }
+.sk-row { display: grid; gap: 8px; }
+.sk-line { height: 13px; border-radius: 8px; background: linear-gradient(90deg, var(--pc-soft, #eceef4) 30%, rgb(255 255 255 / 70%) 45%, var(--pc-soft, #eceef4) 60%); background-size: 300% 100%; animation: shimmer 1.4s linear infinite; }
+html[data-theme="dark"] .sk-line { background: linear-gradient(90deg, #1b1f2e 30%, #262b3d 45%, #1b1f2e 60%); background-size: 300% 100%; }
+.sk-line--short { width: 38%; }
+.sk-line--mid { width: 72%; }
+
+/* ---- Chat ---- */
+@keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.arc-chat-message-row { animation: msg-in .18s ease-out both; }
+
+/* ---- Reduce motion: keep things clear, drop the movement ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .ptr.is-loading svg, .pl-mark::before, .splash__dots span { animation-duration: 1.6s !important; animation-iteration-count: infinite !important; }
+}

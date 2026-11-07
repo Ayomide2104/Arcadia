@@ -26,7 +26,7 @@ export function initDock() {
   window.requestAnimationFrame(updateDockPill);
   window.addEventListener('resize', updateDockPill);
   window.addEventListener('orientationchange', () => window.setTimeout(updateDockPill, 250));
-  if (document.fonts?.ready) document.fonts.ready.then(updateDockPill).catch(() => {});
+  document.fonts?.ready?.then?.(updateDockPill)?.catch?.(() => {});
   if (typeof ResizeObserver === 'function') new ResizeObserver(updateDockPill).observe(dock);
 
   // Hide on scroll down, show on scroll up. A little hysteresis keeps it from flickering.

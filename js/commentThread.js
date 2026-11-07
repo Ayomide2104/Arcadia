@@ -8,6 +8,7 @@
    works everywhere. */
 
 import { confirmSheet } from './confirm.js';
+import { animateList, pop } from './motionKit.js';
 
 const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2Z"/></svg>';
 const ARROW = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 11l6-6 6 6"/></svg>';
@@ -155,6 +156,7 @@ export function createThread({
           if (voteMode === 'like') score += (next === 1 ? 1 : 0) - (mine === 1 ? 1 : 0);
           else score += next - mine;
           mine = next; paint();
+          if (next !== 0) pop(up);
           try {
             const saved = await onVote(comment, next);
             if (saved) { score = voteMode === 'like' ? saved.likeCount : saved.score; mine = saved.myVote; comment.myVote = mine; paint(); }
@@ -285,6 +287,7 @@ export function createThread({
     }
 
     for (const child of node.kids) kids.append(build(child, depth + 1));
+    animateList(kids);
     return thread;
   }
 
@@ -315,6 +318,7 @@ export function createThread({
   if (!roots.length) host.append(el('p', 'rt-empty', emptyText));
   for (const root of roots) host.append(build(root, 0));
   onCountChange(total);
+  animateList(host);
 
   return {
     /** Add a top-level comment (from the main comment box). */
