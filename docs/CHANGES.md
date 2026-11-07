@@ -35,3 +35,13 @@ Other: `scripts/smoke*.mjs`, `tests/{lfgConfig,arcadianPoints}.test.js`.
 - Admin: Games page (add/edit/hide games with cover and banner upload) and Site page (announcement banner, pause sign-ups): `admin/admin.js`, `src/routes/adminGameRoutes.js`, `src/routes/adminRoutes.js` (`/site`), `src/models/SiteSetting.js`, `src/services/siteSettings.js`, `src/routes/siteRoutes.js`, `src/middleware/imageUpload.js` (`gameArt`), `src/models/Game.js` (cover/banner fields).
 - Games added by an admin get artwork through `/api/games/art/:slug/:kind`; `getArcadiaGame()` in `main.js` points unknown games there. Built-in games are unchanged.
 - App side: `js/siteBanner.js`; `authRoutes.js` register route honours the sign-ups switch.
+
+## Round: comments, post page, navigation, bottom bar (built from your uploaded zip; tested in a real browser)
+- Root cause of broken delete/report/edit in the comment sheet: sheets and menus were added to the page while the comment sheet was a modal dialog, which blocks everything outside it. New `js/layers.js` (`layerHost()`); used by `confirm.js`, `safety.js`, `postManage.js`, `social.js`, `lfg.js`, `popover.js`.
+- Comment list rebuilt for phones: `js/commentThread.js` (full rewrite) and the "Comment threads" block in `css/arcadia-fixes.css`.
+- Comment sheet is now a short preview with a "View post" button; the full post is a page: `main.js` (`showPostPage`, `commentThreadConfig`, `openPostPage`), `index.html` (`#view-post`). Sheet hash is `#comments/ID`; post page hash is `#post/ID` (shared links).
+- Page history and swipe-back: `main.js` (`pushNav`, `goBack`, popstate), `js/swipeBack.js` (edge swipe back; on Home it opens the menu).
+- Bottom bar: `js/dock.js` (sliding highlight, smooth hide/show), `index.html` (`.dock-pill`), CSS in fixes.
+- Removed "Open original" from `js/lightbox.js`.
+- Profile stats row and tabs, feed tabs fit four, notch/status-bar colour (`index.html`, `manifest.webmanifest`, `applyTheme` in `main.js`).
+- `⋯` menu no longer closes on harmless scroll/resize events (`popover.js`).

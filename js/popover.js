@@ -4,6 +4,8 @@
    It flips upward near the bottom of the screen and closes on outside tap,
    scroll, resize and Escape. */
 
+import { layerHost } from './layers.js';
+
 let current = null;
 
 export function closeMenus() {
@@ -15,6 +17,8 @@ export function attachMenu(button, menu, { onOpen } = {}) {
   menu.classList.add('fm-pop');
   let isOpen = false;
   let openedAt = 0;
+  let anchorTop = 0;
+  let anchorLeft = 0;
 
   function place() {
     const rect = button.getBoundingClientRect();
@@ -36,19 +40,22 @@ export function attachMenu(button, menu, { onOpen } = {}) {
 
   const onPointer = (event) => { if (!menu.contains(event.target) && !button.contains(event.target)) hide(); };
   const onKey = (event) => { if (event.key === 'Escape') { hide(); button.focus?.({ preventScroll: true }); } };
-  // Ignore the scroll/resize noise that fires right as a menu opens (focus, keyboards, address bars),
-  // and scrolling inside the menu itself.
+  // Phones fire scroll/resize events for harmless reasons (address bar, keyboard, momentum).
+  // Only close when the button itself has really moved away.
   const onMove = (event) => {
     if (Date.now() - openedAt < 400) return;
     if (event && event.target instanceof Node && menu.contains(event.target)) return;
-    hide();
+    if (!button.isConnected) { hide(); return; }
+    const rect = button.getBoundingClientRect();
+    if (Math.abs(rect.top - anchorTop) > 28 || Math.abs(rect.left - anchorLeft) > 28) hide();
   };
 
   function show(focusFirst = false) {
     if (current && current !== api) current.hide();
     onOpen?.();
-    document.body.append(menu);
+    layerHost().append(menu);
     place();
+    { const rect = button.getBoundingClientRect(); anchorTop = rect.top; anchorLeft = rect.left; }
     isOpen = true;
     openedAt = Date.now();
     current = api;

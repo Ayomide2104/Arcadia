@@ -30,11 +30,10 @@ function build() {
   const prev = el('button', 'lb-btn lb-prev'); prev.type = 'button'; prev.setAttribute('aria-label', 'Previous photo'); prev.append(svg('m15 5-7 7 7 7'));
   const next = el('button', 'lb-btn lb-next'); next.type = 'button'; next.setAttribute('aria-label', 'Next photo'); next.append(svg('m9 5 7 7-7 7'));
   const counter = el('span', 'lb-counter');
-  const open = el('a', 'lb-open', 'Open original'); open.target = '_blank'; open.rel = 'noopener noreferrer';
   stage.append(img);
-  dialog.append(stage, close, prev, next, counter, open);
+  dialog.append(stage, close, prev, next, counter);
   document.body.append(dialog);
-  ui = { img, prev, next, counter, open };
+  ui = { img, prev, next, counter };
 
   close.addEventListener('click', () => dialog.close());
   prev.addEventListener('click', () => go(-1));
@@ -64,7 +63,6 @@ function show() {
   const item = images[index];
   ui.img.src = item.url;
   ui.img.alt = item.alt || 'Post photo';
-  ui.open.href = item.url;
   ui.counter.textContent = images.length > 1 ? `${index + 1} / ${images.length}` : '';
   ui.prev.hidden = ui.next.hidden = images.length < 2;
 }

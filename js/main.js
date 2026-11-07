@@ -21,6 +21,8 @@ import { showSiteBanner } from './siteBanner.js';
 import { createSafety } from './safety.js';
 import { createSocial } from './social.js';
 import { initViewport } from './viewport.js';
+import { initDock, updateDockPill } from './dock.js';
+import { initSwipeBack } from './swipeBack.js';
 import { initPullRefresh } from './pullRefresh.js';
 
 const loader = createLoader();
@@ -43,7 +45,7 @@ const composer = createComposer({
 const circle = createCircleStrip({
   api: (path, options) => api(path, options),
   setAvatar: (node, avatar, initial) => setAvatar(node, avatar, initial),
-  onOpen: (post, trigger) => openPost(post, trigger),
+  onOpen: (post) => openPostPage(post),
 });
 const safety = createSafety({
   api: (path, options) => api(path, options),
@@ -111,8 +113,18 @@ function syncMessagingSession() {
 function applyTheme(theme, persist = true) {
   const selected = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = selected;
+  // The phone's status bar / notch area takes the app's own background colour, so they blend.
   const themeColor = document.querySelector('meta[name="theme-color"]');
-  if (themeColor) themeColor.content = selected === 'dark' ? '#14171F' : '#5A3FD6';
+  if (themeColor) {
+    themeColor.content = selected === 'dark' ? '#080A12' : '#F4F5F8';
+    window.requestAnimationFrame(() => {
+      const bg = document.body ? getComputedStyle(document.body).backgroundColor : '';
+      const parts = bg.match(/\d+(\.\d+)?/g);
+      if (parts && parts.length >= 3 && !(parts[3] !== undefined && Number(parts[3]) === 0)) {
+        themeColor.content = `#${parts.slice(0, 3).map((n) => Math.round(Number(n)).toString(16).padStart(2, '0')).join('')}`;
+      }
+    });
+  }
   if (persist) {
     try { localStorage.setItem('mkstudios-theme', selected); } catch { /* Theme still applies for this page view. */ }
   }
@@ -136,8 +148,14 @@ function openAuth(action = null) {
 }
 
 let profilePromise = Promise.resolve();
+let navDepth = 0;
+let pagePost = null;
+let pageCard = null;
+let pageThread = null;
 
-function selectView(view) {
+function selectView(view, { fromHistory = false, extra = {} } = {}) {
+  const previousView = document.body.dataset.view || 'feed';
+  if (!fromHistory && view !== previousView) pushNav(view, extra);
   document.body.dataset.view = view;
   if (view !== 'groups') document.body.classList.remove('cc-full');
   $$('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== view; });
@@ -147,8 +165,7 @@ function selectView(view) {
     button.setAttribute('aria-selected', String(active));
     button.tabIndex = active ? 0 : -1;
   });
-  const mobileIndex = { feed: 0, games: 1, groups: 1, friends: 3, profile: 4 }[view];
-  if (mobileIndex !== undefined) $('.mobile-dock')?.style.setProperty('--active-index', String(mobileIndex));
+  updateDockPill();
   $$('.games-switch button').forEach((button) => { const active = button.dataset.viewLink === view; button.classList.toggle('is-current', active); button.setAttribute('aria-selected', String(active)); });
   document.querySelector('.workspace:not([hidden])')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   if (view === 'games') loadGames();
@@ -184,18 +201,7 @@ searchToggle.addEventListener('click', () => {
 });
 $('#global-search').addEventListener('keydown', (event) => { if (event.key === 'Escape') { $('.topbar').classList.remove('search-open'); searchToggle.setAttribute('aria-expanded', 'false'); searchToggle.focus(); } });
 
-let lastScrollY = window.scrollY;
-let dockScrollScheduled = false;
-window.addEventListener('scroll', () => {
-  if (dockScrollScheduled) return;
-  dockScrollScheduled = true;
-  window.requestAnimationFrame(() => {
-    const dock = $('.mobile-dock'); const current = window.scrollY; const atEnd = window.innerHeight + current >= document.documentElement.scrollHeight - 4;
-    if (window.innerWidth < 900) dock.classList.toggle('is-hidden', !atEnd && current > lastScrollY && current > 80);
-    else dock.classList.remove('is-hidden');
-    lastScrollY = current; dockScrollScheduled = false;
-  });
-}, { passive: true });
+initDock();
 
 $$('.feed-tab').forEach((tab, index) => {
   tab.addEventListener('click', () => {
@@ -348,7 +354,7 @@ authForm.addEventListener('submit', async (event) => {
         try { await api(`/posts/${pending.id}/${pending.type}`, { method: 'POST' }); toast(pending.type === 'like' ? 'Post liked.' : 'Post reposted.'); await loadFeed(); }
         catch (error) { toast(error.message); }
       } else if (pending.type === 'comment') {
-        try { const detail = await api(`/posts/${pending.id}`); openPost(detail.post, null); }
+        try { const detail = await api(`/posts/${pending.id}`); openPostPage(detail.post); }
         catch (error) { toast(error.message); }
       }
       else if (pending.type === 'game-interest') {
@@ -947,9 +953,9 @@ function renderPost(post, { embedded = false } = {}) {
   const showComments = () => {
     if (embedded) {
       // Already looking at this post: jump to the comment box instead.
-      const input = $('#comments-input');
-      if (input && !$('#comments-form').hidden) input.focus();
-      else $('#comments-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const input = $('.pp-input') || $('#comments-input');
+      if (input) input.focus();
+      else $('.pp-comments, #comments-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
     openPost(post, document.activeElement);
@@ -1115,6 +1121,15 @@ function renderPost(post, { embedded = false } = {}) {
 
   article._updateComments = updateComments;
 
+  if (!embedded) {
+    // Tapping the post itself (text, empty space) opens the full post page.
+    article.classList.add('is-openable');
+    article.addEventListener('click', (event) => {
+      if (event.target.closest('a, button, input, textarea, select, label, video, .pc-media, .feed-menu, .fm-pop')) return;
+      if (String(window.getSelection?.() || '').length) return;
+      openPostPage(post);
+    });
+  }
   return article;
 }
 
@@ -1202,41 +1217,45 @@ function setCommentsError(error, retry) {
   const button = document.createElement('button'); button.className = 'button'; button.type = 'button'; button.textContent = 'Retry'; button.addEventListener('click', retry); host.append(button);
 }
 
-function renderDiscussion(items) {
-  const list = $('#comments-list');
-  activeThread = createThread({
-    host: list,
-    comments: items,
+// One configuration for every comment list (the comment sheet and the post page), so they always behave the same.
+function commentThreadConfig(getPost, bump) {
+  const me = () => currentUser?.username;
+  return {
     canReply: () => Boolean(currentUser),
-    onNeedSignIn: () => openAuth({ type: 'comment', id: activeCommentsPost?._id }),
+    onNeedSignIn: () => openAuth({ type: 'comment', id: getPost()?._id }),
     avatar: discussionAvatar,
-    isOp: (comment) => Boolean(comment.author?.username) && comment.author.username === activeCommentsPost?.author?.username,
-    opLabel: 'Author',
-    voteMode: isCommunityPost(activeCommentsPost) ? 'vote' : 'like',
-    canVote: (comment) => Boolean(currentUser) && Boolean(comment.author?.username) && comment.author.username !== currentUser.username,
-    onVote: async (comment, value) => api(`/posts/${activeCommentsPost._id}/comments/${comment._id}/vote`, { method: 'PUT', body: JSON.stringify({ value }) }),
+    isOp: (comment) => Boolean(comment.author?.username) && comment.author.username === getPost()?.author?.username,
+    opLabel: isCommunityPost(getPost()) ? 'OP' : 'Author',
+    voteMode: isCommunityPost(getPost()) ? 'vote' : 'like',
+    canVote: (comment) => Boolean(currentUser) && Boolean(comment.author?.username) && comment.author.username !== me(),
+    onVote: async (comment, value) => api(`/posts/${getPost()._id}/comments/${comment._id}/vote`, { method: 'PUT', body: JSON.stringify({ value }) }),
     canManage: (comment) => {
       if (!currentUser || !comment.author?.username) return null;
-      if (comment.author.username === currentUser.username) return { edit: true, delete: true };
-      return activeCommentsPost?.author?.username === currentUser.username ? { delete: true } : null;
+      if (comment.author.username === me()) return { edit: true, delete: true };
+      return getPost()?.author?.username === me() ? { delete: true } : null;
     },
-    onEdit: async (comment, body) => (await api(`/posts/${activeCommentsPost._id}/comments/${comment._id}`, { method: 'PATCH', body: JSON.stringify({ body }) })).comment,
+    onEdit: async (comment, body) => (await api(`/posts/${getPost()._id}/comments/${comment._id}`, { method: 'PATCH', body: JSON.stringify({ body }) })).comment,
     onDelete: async (comment) => {
-      const result = await api(`/posts/${activeCommentsPost._id}/comments/${comment._id}`, { method: 'DELETE' });
-      bumpCommentCount(-1);
+      const result = await api(`/posts/${getPost()._id}/comments/${comment._id}`, { method: 'DELETE' });
+      bump(-1);
       return result;
     },
-    canReport: (comment) => Boolean(currentUser) && comment.author?.username && comment.author.username !== currentUser.username,
+    canReport: (comment) => Boolean(currentUser) && Boolean(comment.author?.username) && comment.author.username !== me(),
     onReport: (comment) => safety.report({ type: 'comment', target: comment._id, label: `Comment by @${comment.author?.username || 'player'}` }),
     name: (author) => author?.displayName || author?.username || 'Player',
     time: (date) => commentTime({ createdAt: date }),
     submit: async (parent, body) => {
-      if (!activeCommentsPost) throw new Error('This post is no longer open.');
-      const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body, parent: parent._id }) });
-      bumpCommentCount();
+      const post = getPost();
+      if (!post) throw new Error('This post is no longer open.');
+      const result = await api(`/posts/${post._id}/comments`, { method: 'POST', body: JSON.stringify({ body, parent: parent._id }) });
+      bump(1);
       return { ...result.comment, author: result.comment.author?.username ? result.comment.author : currentUser };
     },
-  });
+  };
+}
+
+function renderDiscussion(items) {
+  activeThread = createThread({ host: $('#comments-list'), comments: items, ...commentThreadConfig(() => activeCommentsPost, bumpCommentCount) });
 }
 
 async function loadDiscussion(post, generation = commentsLoadGeneration) {
@@ -1272,40 +1291,53 @@ function openComments(post, trigger = document.activeElement, options = {}) {
   activeCommentsPost = post; commentsReturnFocus = trigger instanceof HTMLElement ? trigger : null; commentsLoadGeneration++;
   const author = post.author?.displayName || post.author?.username || 'Player';
   $('.comments-title-desktop').textContent = `${author}’s post`;
-  // Show the whole post (text, photos, game/community chips, actions), not just a snippet.
+  // The sheet shows a short preview; the full post (photos, actions) lives on the post page.
   const postHost = $('#comments-post'); postHost.replaceChildren();
-  activeEmbeddedPost = renderPost(post, { embedded: true });
-  postHost.append(activeEmbeddedPost);
+  activeEmbeddedPost = null;
+  const preview = document.createElement('div'); preview.className = 'cp-preview';
+  const previewHead = document.createElement('div'); previewHead.className = 'cp-head';
+  const previewAvatar = discussionAvatar(post.author); previewAvatar.classList.add('cp-avatar');
+  const previewName = document.createElement('strong'); previewName.textContent = author;
+  const viewPost = document.createElement('button'); viewPost.type = 'button'; viewPost.className = 'cp-view'; viewPost.textContent = 'View post';
+  viewPost.addEventListener('click', () => { closeCommentsNow(); openPostPage(post); });
+  previewHead.append(previewAvatar, previewName, viewPost);
+  const previewText = document.createElement('p'); previewText.className = 'cp-text';
+  previewText.textContent = post.title ? `${post.title}${post.body ? ' · ' + post.body : ''}` : (post.body || ((post.media || []).length ? 'Photo post' : ''));
+  preview.append(previewHead, previewText);
+  postHost.append(preview);
   $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser);
   $('#comments-error').hidden = true;
-  if (options.updateHash !== false && location.hash !== `#post/${id}`) {
-    history.pushState({ ...(history.state || {}), arcadiaComments: id }, '', `#post/${id}`); commentsHashPushed = true;
+  if (options.updateHash !== false && location.hash !== `#comments/${id}`) {
+    history.pushState({ ...(history.state || {}), arcadiaComments: id }, '', `#comments/${id}`); commentsHashPushed = true;
   } else commentsHashPushed = false;
   if (!commentsDialog.open) commentsDialog.showModal();
   document.body.classList.add('comments-open');
   loadDiscussion(post);
-  if (currentUser) window.setTimeout(() => $('#comments-input').focus(), 40);
+  // On phones, don't pop the keyboard open until the person taps the box.
+  if (currentUser && !window.matchMedia('(pointer: coarse)').matches) window.setTimeout(() => $('#comments-input').focus(), 40);
 }
 
 function closeCommentsNow({ clearHash = true } = {}) {
   if (!commentsDialog.open) return;
   commentsDialog.close(); document.body.classList.remove('comments-open'); activeCommentsPost = null; activeThread = null; activeEmbeddedPost = null; commentsLoadGeneration++;
-  if (clearHash && /^#post\/[a-f\d]{24}$/i.test(location.hash)) history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+  if (clearHash && /^#comments\/[a-f\d]{24}$/i.test(location.hash)) history.replaceState(history.state, '', `${location.pathname}${location.search}`);
   const target = commentsReturnFocus; commentsReturnFocus = null;
   if (target?.isConnected) window.setTimeout(() => target.focus(), 0);
 }
 
 function requestCommentsClose() {
-  if (commentsHashPushed && /^#post\/[a-f\d]{24}$/i.test(location.hash)) { commentsHashPushed = false; history.back(); return; }
+  if (commentsHashPushed && /^#comments\/[a-f\d]{24}$/i.test(location.hash)) { commentsHashPushed = false; history.back(); return; }
   closeCommentsNow();
 }
 
+// The comment sheet lives at #comments/ID; the full post page at #post/ID.
 async function syncCommentsRoute() {
-  const match = location.hash.match(/^#post\/([a-f\d]{24})$/i);
-  if (!match) { if (commentsDialog.open) closeCommentsNow({ clearHash: false }); return; }
-  if (commentsDialog.open && String(activeCommentsPost?._id) === match[1]) return;
+  const match = location.hash.match(/^#comments\/([a-f\d]{24})$/i);
+  if (!match) { if (commentsDialog.open) closeCommentsNow({ clearHash: false }); return false; }
+  if (commentsDialog.open && String(activeCommentsPost?._id) === match[1]) return true;
   try { const result = await api(`/posts/${match[1]}`); openPost(result.post, null, { updateHash: false }); }
   catch { history.replaceState(history.state, '', `${location.pathname}${location.search}`); toast('That post is unavailable.'); }
+  return true;
 }
 
 $('#comments-close').addEventListener('click', requestCommentsClose);
@@ -1350,8 +1382,147 @@ async function refreshCurrentView() {
   if (currentUser) notifications.refresh();
 }
 initPullRefresh({ onRefresh: refreshCurrentView });
-window.addEventListener('popstate', syncCommentsRoute); window.addEventListener('hashchange', syncCommentsRoute);
-if (/^#post\/[a-f\d]{24}$/i.test(location.hash)) window.setTimeout(syncCommentsRoute, 0);
+initSwipeBack({
+  isHome: () => (document.body.dataset.view || 'feed') === 'feed' && navDepth === 0,
+  canGoBack: () => navDepth > 0 || (document.body.dataset.view || 'feed') !== 'feed',
+  goBack: () => goBack(),
+  openMenu: () => menuDrawer.open(),
+});
+
+/* ------------------------------ page history ------------------------------
+   Every move to another page adds a history entry, so the phone's Back button and the edge-swipe
+   both return to the page you came from (with your scroll position). */
+try {
+  const state = history.state || {};
+  navDepth = Number(state.depth) || 0;
+  history.replaceState({ ...state, arcadiaView: state.arcadiaView || 'feed', depth: navDepth }, '');
+} catch { /* history unavailable */ }
+
+function pushNav(view, extra = {}) {
+  try {
+    history.replaceState({ ...(history.state || {}), scrollY: window.scrollY }, '');
+    navDepth += 1;
+    const url = view === 'post' && extra.postId ? `#post/${extra.postId}` : `${location.pathname}${location.search}`;
+    history.pushState({ arcadiaView: view, depth: navDepth, ...extra }, '', url);
+  } catch { /* history unavailable */ }
+}
+
+function leaveToHome() {
+  // Opened straight onto an inner page (like a shared link): back means Home.
+  navDepth = 0;
+  try { history.replaceState({ arcadiaView: 'feed', depth: 0 }, '', `${location.pathname}${location.search}`); } catch { /* ignore */ }
+  selectView('feed', { fromHistory: true });
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+function goBack() {
+  if (commentsDialog.open) { requestCommentsClose(); return; }
+  const view = document.body.dataset.view || 'feed';
+  if (navDepth > 0) history.back();
+  else if (view !== 'feed') leaveToHome();
+}
+
+window.addEventListener('popstate', async (event) => {
+  if (await syncCommentsRoute()) return; // the comment sheet opened or closed
+  const state = event.state || { arcadiaView: 'feed', depth: 0 };
+  navDepth = Number(state.depth) || 0;
+  const target = state.arcadiaView || 'feed';
+  if (target === 'post' && state.postId) {
+    if (document.body.dataset.view !== 'post' || String(pagePost?._id) !== String(state.postId)) {
+      try { const result = await api(`/posts/${state.postId}`); showPostPage(result.post, { fromHistory: true }); }
+      catch { leaveToHome(); }
+    } else selectView('post', { fromHistory: true });
+    return;
+  }
+  selectView(target, { fromHistory: true });
+  if (target === 'profile' && state.profile) void renderProfile(state.profile);
+  window.requestAnimationFrame(() => window.scrollTo({ top: Number(state.scrollY) || 0, behavior: 'instant' }));
+});
+window.addEventListener('hashchange', () => { void syncCommentsRoute(); });
+
+/* ------------------------------- post page ------------------------------- */
+function bumpPageComments(delta = 1) {
+  if (!pagePost) return;
+  pagePost.commentCount = Math.max(0, (pagePost.commentCount || 0) + delta);
+  pageCard?._updateComments?.(pagePost.commentCount);
+  document.querySelector(`#post-${pagePost._id}`)?._updateComments?.(pagePost.commentCount);
+  const heading = $('#view-post .pp-count'); if (heading) heading.textContent = pagePost.commentCount === 1 ? '1 comment' : `${pagePost.commentCount} comments`;
+}
+
+function showPostPage(post, { fromHistory = false } = {}) {
+  if (!post?._id) return;
+  if (isCommunityPost(post)) { openPost(post, null); return; }
+  pagePost = post;
+  if (commentsDialog.open) closeCommentsNow({ clearHash: false });
+  selectView('post', { fromHistory, extra: { postId: String(post._id) } });
+  const host = $('#view-post'); host.replaceChildren();
+  const page = uiEl('div', 'pp-page'); host.append(page);
+
+  const bar = uiEl('div', 'pp-bar');
+  const back = uiEl('button', 'pp-back'); back.type = 'button'; back.innerHTML = BACK_ICON; back.setAttribute('aria-label', 'Back');
+  back.addEventListener('click', goBack);
+  bar.append(back, uiEl('h1', 'pp-title', 'Post'));
+  page.append(bar);
+
+  pageCard = renderPost(post, { embedded: true });
+  pageCard.classList.add('pp-card');
+  page.append(pageCard);
+
+  const count = pagePost.commentCount || 0;
+  const heading = uiEl('h2', 'pp-count', count === 1 ? '1 comment' : `${count} comments`);
+  const list = uiEl('div', 'pp-comments', '');
+  page.append(heading, list);
+
+  // Comment box pinned to the bottom, like a social post.
+  const composer = uiEl('form', 'pp-composer');
+  if (currentUser) {
+    const input = uiEl('input', 'pp-input'); input.type = 'text'; input.maxLength = 1000; input.placeholder = 'Write a comment…'; input.setAttribute('aria-label', 'Write a comment'); input.autocomplete = 'off';
+    const send = uiEl('button', 'pp-send', 'Send'); send.type = 'submit';
+    composer.append(input, send);
+    composer.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = input.value.trim(); if (!body) return;
+      send.disabled = true;
+      try {
+        const result = await api(`/posts/${post._id}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+        bumpPageComments(1);
+        input.value = '';
+        pageThread?.addRoot({ ...result.comment, author: result.comment.author?.username ? result.comment.author : currentUser });
+      } catch (error) { toast(error.message || 'Could not post your comment.'); }
+      finally { send.disabled = false; }
+    });
+  } else {
+    const prompt = uiEl('button', 'pp-signin', 'Sign in to comment'); prompt.type = 'button';
+    prompt.addEventListener('click', () => openAuth({ type: 'comment', id: post._id }));
+    composer.append(prompt);
+  }
+  page.append(composer);
+
+  list.append(uiEl('p', 'pp-loading', 'Loading comments…'));
+  api(`/posts/${post._id}/comments?limit=50`).then((data) => {
+    if (pagePost !== post) return;
+    pageThread = createThread({ host: list, comments: data.items || [], ...commentThreadConfig(() => pagePost, bumpPageComments) });
+  }).catch((error) => { list.replaceChildren(uiEl('p', 'pp-loading', error.message || 'Could not load comments.')); });
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+function openPostPage(post) {
+  if (!post?._id) return;
+  showPostPage(post);
+}
+
+// Used for shared links and notifications: fetch, then show.
+async function openPostPageById(id) {
+  try { const result = await api(`/posts/${id}`); showPostPage(result.post); }
+  catch { toast('That post is unavailable.'); }
+}
+
+// A shared link (#post/ID) opens the post page.
+if (/^#post\/[a-f\d]{24}$/i.test(location.hash)) {
+  const sharedId = location.hash.slice(6);
+  window.setTimeout(() => { void api(`/posts/${sharedId}`).then((result) => { navDepth = 0; showPostPage(result.post, { fromHistory: true }); history.replaceState({ arcadiaView: 'post', depth: 0, postId: sharedId }, '', `#post/${sharedId}`); }).catch(() => { history.replaceState({ arcadiaView: 'feed', depth: 0 }, '', location.pathname); toast('That post is unavailable.'); }); }, 0);
+}
+if (/^#comments\/[a-f\d]{24}$/i.test(location.hash)) window.setTimeout(syncCommentsRoute, 0);
 
 function createOwnerTools(slug){const form=document.createElement('form');form.className='community-owner-tools glass-panel';const title=document.createElement('h3');title.textContent='Manage moderators';const username=document.createElement('input');username.placeholder='Member username';username.pattern='[A-Za-z0-9_]{3,24}';username.required=true;username.setAttribute('aria-label','Member username');const role=document.createElement('select');role.setAttribute('aria-label','Member role');for(const value of ['moderator','member']){const option=document.createElement('option');option.value=value;option.textContent=value==='moderator'?'Make moderator':'Make member';role.append(option);}const submit=document.createElement('button');submit.className='button';submit.type='submit';submit.textContent='Update role';form.append(title,username,role,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{await api(`/communities/${slug}/members/${encodeURIComponent(username.value)}/role`,{method:'PATCH',body:JSON.stringify({role:role.value})});toast('Member role updated.');}catch(error){toast(error.message);}finally{submit.disabled=false;}});return form;}
 
@@ -1465,7 +1636,7 @@ notifications = createNotifications({
   button: $('#notifications-button'),
   onNeedSignIn: () => openAuth(),
   onOpenPost: async (postId) => {
-    try { const detail = await api(`/posts/${postId}`); openPost(detail.post, null); }
+    try { const detail = await api(`/posts/${postId}`); openPostPage(detail.post); }
     catch { toast('That post is no longer available.'); }
   },
   onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
@@ -1475,7 +1646,7 @@ notifications = createNotifications({
 if (currentUser) notifications.refresh();
 
 // Left menu drawer (three-bar button): every section in one place.
-createDrawer({
+const menuDrawer = createDrawer({
   toggle: $('#menu-toggle'),
   getUser: () => currentUser,
   getView: () => document.body.dataset.view || 'feed',

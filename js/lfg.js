@@ -2,6 +2,8 @@
    Each game asks for the join details it really uses (Riot ID, room code, invite code...),
    and those details are only shown to people the host accepts. */
 
+import { layerHost } from './layers.js';
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -424,7 +426,7 @@ export function createLfg({ mount, api, getUser, toast, onNeedSignIn, setAvatar,
     overlay.append(sheet);
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
     sheet.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
-    document.body.append(overlay); document.body.classList.add('lfg-open');
+    layerHost().append(overlay); document.body.classList.add('lfg-open');
     game.focus();
 
     sheet.addEventListener('submit', async (event) => {

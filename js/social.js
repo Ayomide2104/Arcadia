@@ -4,6 +4,8 @@
    - Followers/Following lists open in a sheet (only if the player allows it).
    - A page of its own for Arcadian points: total, level, breakdown, top posts and the rules. */
 
+import { layerHost, swallowEscape } from './layers.js';
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -132,8 +134,8 @@ export function createSocial({ api, toast, getUser, onNeedSignIn, setAvatar, ope
     sheet.append(head, list, more);
     overlay.append(sheet);
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
-    sheet.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
-    document.body.append(overlay); document.body.classList.add('so-open');
+    sheet.addEventListener('keydown', (event) => { if (swallowEscape(event)) close(); });
+    layerHost().append(overlay); document.body.classList.add('so-open');
     x.focus();
 
     let cursor = null;

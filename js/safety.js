@@ -1,5 +1,7 @@
 /* Report and block: one small module used by posts, comments, profiles and invites. */
 
+import { layerHost, swallowEscape } from './layers.js';
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -28,8 +30,8 @@ export function createSafety({ api, toast, getUser, onNeedSignIn, setAvatar, onB
     build(box, close);
     overlay.append(box);
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
-    box.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
-    document.body.append(overlay); document.body.classList.add('sf-open');
+    box.addEventListener('keydown', (event) => { if (swallowEscape(event)) close(); });
+    layerHost().append(overlay); document.body.classList.add('sf-open');
     (box.querySelector('input, button') || box).focus?.();
   }
 

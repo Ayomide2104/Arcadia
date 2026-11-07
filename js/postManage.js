@@ -1,5 +1,6 @@
 /* Edit and delete your own posts (feed posts and community posts). */
 import { confirmSheet } from './confirm.js';
+import { layerHost, swallowEscape } from './layers.js';
 
 export function createPostManager({ api, toast }) {
   /** Opens an edit sheet. Resolves with { body, title, editedAt } when saved, or null. */
@@ -56,7 +57,7 @@ export function createPostManager({ api, toast }) {
       const finish = (value) => { overlay.remove(); document.body.classList.remove('sf-open'); resolve(value); };
       cancel.addEventListener('click', () => finish(null));
       overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) finish(null); });
-      box.addEventListener('keydown', (event) => { if (event.key === 'Escape') finish(null); });
+      box.addEventListener('keydown', (event) => { if (swallowEscape(event)) finish(null); });
       box.addEventListener('submit', async (event) => {
         event.preventDefault();
         save.disabled = true; error.hidden = true;
@@ -68,7 +69,7 @@ export function createPostManager({ api, toast }) {
           finish(result.post);
         } catch (failure) { error.textContent = failure.message || 'Could not save your changes.'; error.hidden = false; save.disabled = false; }
       });
-      document.body.append(overlay);
+      layerHost().append(overlay);
       document.body.classList.add('sf-open');
       area.focus();
       area.setSelectionRange(area.value.length, area.value.length);

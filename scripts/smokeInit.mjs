@@ -68,6 +68,7 @@ Object.assign(g, {
   FormData: class { append() {} },
   matchMediaQuery: quiet,
   scrollTo: quiet,
+  getComputedStyle: () => ({ getPropertyValue: () => '', display: 'block', position: 'fixed' }),
   history: { replaceState: quiet, pushState: quiet, state: null },
   innerWidth: 390, innerHeight: 800, scrollY: 0,
   visualViewport: null,

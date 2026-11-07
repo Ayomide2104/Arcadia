@@ -1,3 +1,5 @@
+import { layerHost, swallowEscape } from './layers.js';
+
 /* A small, consistent "are you sure?" sheet. Returns a promise: true if confirmed. */
 
 export function confirmSheet({ title, message = '', confirmLabel = 'Delete', cancelLabel = 'Cancel', danger = true }) {
@@ -32,8 +34,8 @@ export function confirmSheet({ title, message = '', confirmLabel = 'Delete', can
     cancel.addEventListener('click', () => finish(false));
     ok.addEventListener('click', () => finish(true));
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) finish(false); });
-    box.addEventListener('keydown', (event) => { if (event.key === 'Escape') finish(false); });
-    document.body.append(overlay);
+    box.addEventListener('keydown', (event) => { if (swallowEscape(event)) finish(false); });
+    layerHost().append(overlay);
     document.body.classList.add('sf-open');
     cancel.focus();
   });
